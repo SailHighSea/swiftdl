@@ -2,8 +2,9 @@
 # them, plus the browser extension, to a draft GitHub release whose notes
 # come from CHANGELOG.md. Review the draft on GitHub, then publish it.
 # To rebuild an existing tag, run this workflow by hand and give the tag.
-# Every push to dev builds the same files into a public pre-release named
-# like "SwiftDL v0.3.0-dev1" (the number counts up per version).
+# Every push to dev builds portable copies into a public pre-release named
+# like "SwiftDL v0.3.1-dev1" (the number counts up per version); tagged
+# releases add installers too.
 name: Release
 
 on:
@@ -57,11 +58,20 @@ jobs:
 
           ### Install (portable)
           Unzip anywhere and run it. Settings, downloads and tools stay in the `data` folder beside it.
-          - **Windows:** `SwiftDL_*_windows-x64-portable.zip`, run `SwiftDL.exe`
+          - **Windows:** `SwiftDL_*_windows-x64-portable.zip`, run `SwiftDL.exe` (Windows on ARM: `SwiftDL_*_windows-arm64-portable.zip`)
           - **macOS:** `SwiftDL_*_macos-universal-portable.zip`, open `SwiftDL.app` (right-click, Open the first time)
           - **Linux:** `SwiftDL_*_linux-x64-portable.tar.gz`, run `./SwiftDL` (needs WebKitGTK 4.1)
           - **Browser extension:** open SwiftDL, then Settings, Browser. `swiftdl-extension.zip` (Chromium browsers) and `swiftdl-firefox.xpi` (Firefox) have the same files.
           EOF
+          if [ "$GITHUB_REF_TYPE" != branch ]; then
+            cat >> notes.md <<'EOF'
+
+          ### Installers
+          - **Windows:** `SwiftDL_*_x64-setup.exe` (no admin rights needed) or `.msi`; Windows on ARM: `SwiftDL_*_arm64-setup.exe`
+          - **macOS:** `SwiftDL_*_universal.dmg`
+          - **Linux:** `.AppImage`, `.deb` or `.rpm`
+          EOF
+          fi
       - name: Create release
         id: release
         env:
@@ -90,12 +100,19 @@ jobs:
           - platform: windows-latest
             label: windows-x64
             build: --no-bundle
+            installer: ""
+          - platform: windows-11-arm
+            label: windows-arm64
+            build: --no-bundle
+            installer: ""
           - platform: macos-latest
             label: macos-universal
             build: --bundles app --target universal-apple-darwin
+            installer: --target universal-apple-darwin
           - platform: ubuntu-22.04
             label: linux-x64
             build: --no-bundle
+            installer: ""
     runs-on: ${{ matrix.platform }}
     defaults:
       run:
@@ -140,7 +157,8 @@ jobs:
           case "$RUNNER_OS" in
             Windows)
               cp target/release/swiftdl-app.exe stage/SwiftDL/SwiftDL.exe
-              (cd stage && 7z a -tzip "../$name.zip" SwiftDL)
+              if command -v 7z >/dev/null; then (cd stage && 7z a -tzip "../$name.zip" SwiftDL)
+              else powershell -NoProfile -Command "Compress-Archive -Path stage/SwiftDL -DestinationPath $name.zip"; fi
               file="$name.zip" ;;
             Linux)
               cp target/release/swiftdl-app stage/SwiftDL/SwiftDL
@@ -152,6 +170,19 @@ jobs:
               file="$name.zip" ;;
           esac
           gh release upload "$TAG" "$file" --clobber
+
+      # Installers (.exe/.msi, .dmg, .AppImage/.deb/.rpm) only for tagged
+      # releases; dev builds are the portable copies above.
+      - name: Installers
+        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app/src-tauri
+          tauriScript: npx --yes @tauri-apps/cli@2
+          releaseId: ${{ needs.create-release.outputs.id }}
+          args: ${{ matrix.installer }}
 
   extension:
     needs: create-release
