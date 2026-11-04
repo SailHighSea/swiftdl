@@ -179,8 +179,29 @@ pub fn show_main(m: Mgr) {
     crate::show_main_window(m.app_handle());
 }
 
+/// Newer release on GitHub for the chosen channel, if there is one.
 #[tauri::command]
-pub fn integration_status() -> crate::browser::IntegrationStatus {
+pub async fn check_update(m: Mgr<'_>, include_dev: bool) -> Result<Option<crate::updater::UpdateInfo>, String> {
+    crate::updater::check(m.client(), include_dev).await.map_err(|e| {
+        crate::applog::info(format!("update check failed: {e:#}"));
+        format!("{e:#}")
+    })
+}
+
+#[tauri::command]
+pub fn open_log_folder(m: Mgr) -> Result<(), String> {
+    let dir = crate::applog::dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    m.app_handle().opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn app_info() -> serde_json::Value {
+    serde_json::json!({ "tag": crate::updater::current_tag(), "repo": crate::updater::REPO, "logFile": crate::applog::file() })
+}
+
+#[tauri::command]
+pub fn integration_status()-> crate::browser::IntegrationStatus {
     crate::browser::status()
 }
 

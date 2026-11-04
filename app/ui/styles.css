@@ -511,10 +511,10 @@ code { font: 11.5px ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospac
 .toast.out { animation: toast-out .18s ease-in forwards; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px) scale(.98); } }
 @keyframes toast-out { to { opacity: 0; transform: translateY(4px); } }
-.toast .t-ic { color: var(--accent); display: grid; place-items: center; }
+.toast .t-ic { flex: none; color: var(--accent); display: grid; place-items: center; }
 .toast .t-ic.ok { color: var(--green); }
 .toast .t-ic.err { color: var(--red); }
-.toast span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toast > span:not(.t-ic) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .drop { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 8%, transparent); backdrop-filter: blur(3px); pointer-events: none; }
 .drop-card { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 28px 40px; border-radius: 16px; background: var(--elev); box-shadow: var(--shadow-pop); outline: 1.5px dashed var(--accent); outline-offset: -10px; }
@@ -536,3 +536,24 @@ code { font: 11.5px ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospac
 #set-tools-bar .p-bar { height: 8px; border-radius: 4px; background: var(--track); overflow: hidden; }
 #set-tools-bar .p-bar i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
 #set-tools-info { word-break: break-all; }
+
+/* Several downloads selected: the last one clicked keeps a ring. */
+.row { cursor: default; }
+.row.sel.multi { background: color-mix(in srgb, var(--accent) 13%, transparent); }
+
+/* Clear completed (icon only) */
+#btn-clear-done[hidden] { display: none; }
+
+.repo-link { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); text-decoration: none; font-weight: 550; }
+.repo-link:hover { text-decoration: underline; }
+.repo-link svg.ic { width: 14px; height: 14px; }
+.about { padding-bottom: 20px; }
+#update-status.ok { color: var(--green); }
+#update-status.err { color: var(--red); }
+
+/* Persistent toast (update available): click to open, x to dismiss */
+.toast.sticky { cursor: pointer; box-shadow: inset 0 0 0 1px var(--accent), var(--shadow-pop); }
+.toast.sticky .t-x { flex: none; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); }
+.toast.sticky .t-x:hover { background: var(--hover); color: var(--text); }
+.toast .t-body { display: flex; flex-direction: column; gap: 1px; white-space: normal; }
+.toast .t-body small { font-size: 11.5px; color: var(--muted); font-weight: 450; }

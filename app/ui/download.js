@@ -27,11 +27,12 @@ const P = {
   doc: '<path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5M9 12.5h6M9 16h6"/>',
   image: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.7"/><path d="m20.5 15.5-4.5-4.5-9.5 8.5"/>',
   file: '<path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5"/>',
+  magnet: '<path d="M6 4v8a6 6 0 0 0 12 0V4h-4v8a2 2 0 0 1-4 0V4z"/><path d="M6 8h4M14 8h4"/>',
 };
 const icon = (n) => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${P[n] || P.file}</svg>`;
 const CATS = {
   Video: { color: "#8b5cf6", icon: "video" }, Music: { color: "#ec4899", icon: "music" }, Programs: { color: "#3b82f6", icon: "app" },
-  Compressed: { color: "#f59e0b", icon: "archive" }, Documents: { color: "#10b981", icon: "doc" }, Images: { color: "#f97316", icon: "image" },
+  Compressed: { color: "#f59e0b", icon: "archive" }, Torrents: { color: "#14b8a6", icon: "magnet" }, Documents: { color: "#10b981", icon: "doc" }, Images: { color: "#f97316", icon: "image" },
   Other: { color: "#8b8f98", icon: "file" },
 };
 const catOf = (name) => {
@@ -492,7 +493,7 @@ async function torrentView(token, inc, settings, headers) {
   let dir = settings.downloadDir, info = null;
   const magnet = inc.url.startsWith("magnet:");
   view.innerHTML = `
-    <div class="d-head">${glyph("Compressed")}<div class="d-name"><input id="c-name" spellcheck="false" placeholder="${magnet ? "Asking peers for the details…" : "Reading the torrent…"}" readonly><div class="d-sub"><span class="st">${magnet ? "Magnet link" : "Torrent"}</span></div></div></div>
+    <div class="d-head">${glyph("Torrents")}<div class="d-name"><input id="c-name" spellcheck="false" placeholder="${magnet ? "Asking peers for the details…" : "Reading the torrent…"}" readonly><div class="d-sub"><span class="st">${magnet ? "Magnet link" : "Torrent"}</span></div></div></div>
     <div class="t-files" id="t-files"><div class="t-wait"><span class="spinner"></span><span class="muted">${magnet ? "Finding peers who share it. This can take a few seconds." : "Reading the file list…"}</span></div></div>
     <div class="kv">
       <span class="k">Selected</span><span class="v" id="t-sel">—</span>
@@ -565,7 +566,7 @@ let layout = "";
 function render() {
   const it = current;
   if (!it) return;
-  const cat = it.category || catOf(it.filename);
+  const cat = Array.isArray(it.torrentFiles) ? "Torrents" : it.category || catOf(it.filename);
   const pct = it.size ? Math.min(100, (it.downloaded / it.size) * 100) : it.status === "completed" ? 100 : 0;
   const eta = it.speed > 0 && it.size ? (it.size - it.downloaded) / it.speed : Infinity;
 

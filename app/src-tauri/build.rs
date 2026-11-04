@@ -12,6 +12,7 @@ fn main() {
     let src = Path::new("../../extension");
     let out = Path::new("gen/extension-firefox");
     println!("cargo:rerun-if-changed=../../extension");
+    println!("cargo:rerun-if-env-changed=SWIFTDL_BUILD_TAG");
     let _ = fs::remove_dir_all(out);
     copy_dir(src, out).expect("couldn't copy the extension for Firefox");
 

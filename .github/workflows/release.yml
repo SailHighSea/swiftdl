@@ -2,9 +2,9 @@
 # them, plus the browser extension, to a draft GitHub release whose notes
 # come from CHANGELOG.md. Review the draft on GitHub, then publish it.
 # To rebuild an existing tag, run this workflow by hand and give the tag.
-# Every push to dev builds portable copies into a public pre-release named
+# Every push to dev builds portable copies and installers into a public pre-release named
 # like "SwiftDL v0.3.1-dev1" (the number counts up per version); tagged
-# releases add installers too.
+# releases are drafts to review.
 name: Release
 
 on:
@@ -66,15 +66,13 @@ jobs:
           - **Linux:** `SwiftDL_*_linux-x64-portable.tar.gz`, run `./SwiftDL` (needs WebKitGTK 4.1)
           - **Browser extension:** open SwiftDL, then Settings, Browser. `swiftdl-extension.zip` (Chromium browsers) and `swiftdl-firefox.xpi` (Firefox) have the same files.
           EOF
-          if [ -z "$DEV" ]; then
-            cat >> notes.md <<'EOF'
+          cat >> notes.md <<'EOF'
 
           ### Installers
           - **Windows:** `SwiftDL_*_x64-setup.exe` (no admin rights needed) or `.msi`; Windows on ARM: `SwiftDL_*_arm64-setup.exe`
           - **macOS:** `SwiftDL_*_universal.dmg`
           - **Linux:** `.AppImage`, `.deb` or `.rpm`
           EOF
-          fi
       - name: Create release
         id: release
         env:
@@ -87,10 +85,17 @@ jobs:
           if [ -n "$DEV" ]; then
             # The notes are the commit message: summary, then description.
             git log -1 --format=%B "$GITHUB_SHA" | cat - notes.md > notes.dev && mv notes.dev notes.md
-            id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -f name="SwiftDL $TAG" -F draft=false -F prerelease=true -F body=@notes.md --jq .id)
+            create() { gh api -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -f name="SwiftDL $TAG" -F draft=false -F prerelease=true -F body=@notes.md --jq .id; }
           else
-            id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f name="SwiftDL $TAG" -F draft=true -F body=@notes.md --jq .id)
+            create() { gh api -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f name="SwiftDL $TAG" -F draft=true -F body=@notes.md --jq .id; }
           fi
+          # GitHub's API sometimes answers 502/503 for a moment: try again.
+          id=""
+          for wait in 5 15 30 0; do
+            id=$(create) && break
+            echo "Creating the release failed; retrying in ${wait}s"
+            [ "$wait" -gt 0 ] && sleep "$wait"
+          done
           test -n "$id"
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
@@ -122,6 +127,8 @@ jobs:
         shell: bash
     env:
       TAG: ${{ needs.create-release.outputs.tag }}
+      # Compiled in, so the app knows which dev build it is (see updater.rs).
+      SWIFTDL_BUILD_TAG: ${{ needs.create-release.outputs.tag }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
@@ -174,10 +181,9 @@ jobs:
           esac
           gh release upload "$TAG" "$file" --clobber
 
-      # Installers (.exe/.msi, .dmg, .AppImage/.deb/.rpm) only for tagged
-      # releases; dev builds are the portable copies above.
+      # Installers (.exe/.msi, .dmg, .AppImage/.deb/.rpm) for every build,
+      # dev builds included, next to the portable copies above.
       - name: Installers
-        if: needs.create-release.outputs.dev != 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -219,8 +225,15 @@ jobs:
           # so release Firefox accepts it. Without them the unsigned file is
           # attached as before.
           if [ -n "$AMO_JWT_ISSUER" ] && [ -n "$AMO_JWT_SECRET" ]; then
-            npx --yes web-ext@8 sign --source-dir firefox --artifacts-dir signed \
-              --channel unlisted --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET"
-            cp signed/*.xpi swiftdl-firefox.xpi
+            if npx --yes web-ext@8 sign --source-dir firefox --artifacts-dir signed \
+              --channel unlisted --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET"; then
+              cp signed/*.xpi swiftdl-firefox.xpi
+            else
+              # A tagged release must be signed; a dev build goes out unsigned.
+              case "$TAG" in
+                *-dev*) echo "::warning::Mozilla signing failed; attaching the unsigned Firefox add-on" ;;
+                *) exit 1 ;;
+              esac
+            fi
           fi
           gh release upload "$TAG" swiftdl-extension.zip swiftdl-firefox.xpi --clobber

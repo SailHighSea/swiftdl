@@ -6,6 +6,22 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Select several downloads with Shift+click (range), Ctrl+click (toggle),
+  Shift+arrows or Ctrl+A, then pause, resume, copy links or remove them together.
+- An icon button to clear completed downloads from the list.
+- A Torrents category in the sidebar for torrent and magnet downloads.
+- Settings: start with Windows (hidden in the tray), a debug log (plus an
+  always-on log of errors and crashes), check for updates, automatic update
+  checks, an option to include dev builds, and a link to the GitHub repository.
+  A new version shows as a notification that opens its release page.
+- Dev builds now come with installers for Windows, macOS and Linux too.
+
+### Fixed
+- The video button now finds videos inside shadow DOM, so it appears on more
+  sites, and on feeds it sends the video's own link instead of the site's
+  front page.
+
 ## [0.3.1] - 2026-11-04
 
 ### Fixed

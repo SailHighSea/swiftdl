@@ -14,7 +14,7 @@
   let settings = {
     downloadDir: "C:\\Users\\you\\Downloads", connections: 8, maxConcurrent: 3, speedLimitKib: 0,
     sortIntoCategories: true, askBeforeDownload: true, notifyOnComplete: true,
-    offerExtension: true, onboardingDismissed: false, showProgressWindow: true, closeToTray: true, theme: "system", seedUntil: "stop",
+    offerExtension: true, onboardingDismissed: false, showProgressWindow: true, closeToTray: true, theme: "system", seedUntil: "stop", startWithSystem: false, autoUpdateCheck: true, includeDevBuilds: false, debugLog: false,
   };
   if (VIDEO) Object.assign(settings, { downloadDir: "C:\\Users\\Harsh\\Downloads", onboardingDismissed: true });
   const catFor = (name) => {
@@ -195,6 +195,12 @@
     tools_status: () => ({ dir: "C:\\Users\\you\\AppData\\Roaming\\com.swiftdl.app\\tools", ytdlp: !location.search.includes("tools"), deno: !location.search.includes("tools"), ffmpeg: !location.search.includes("tools"), ffmpegDownloadable: true, portable: false }),
     install_tools: async () => { for (let i = 1; i <= 10; i++) { window.__toolsNote = `Getting deno · ${i * 10}%`; await new Promise((r) => setTimeout(r, 250)); } window.__toolsNote = null; },
     tools_note: () => window.__toolsNote || null,
+    check_update: async ({ includeDev }) => {
+      await new Promise((r) => setTimeout(r, 500));
+      return location.search.includes("update") ? { tag: includeDev ? "v0.4.0-dev1" : "v0.4.0", url: "https://github.com/SailHighSea/swiftdl/releases", prerelease: !!includeDev } : null;
+    },
+    open_log_folder: () => {},
+    app_info: () => ({ tag: "v0.3.1", repo: "SailHighSea/swiftdl", logFile: "C:\\Users\\you\\AppData\\Roaming\\com.swiftdl.app\\logs\\swiftdl.log" }),
   };
 
   window.__TAURI__ = {

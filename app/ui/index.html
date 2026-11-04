@@ -33,6 +33,7 @@
       <header class="header" data-tauri-drag-region>
         <div class="h-title" data-tauri-drag-region><span class="h-icon" id="h-icon"></span><span id="h-name">All downloads</span><span class="h-count" id="h-count"></span></div>
         <div class="h-actions">
+          <button class="sq-btn" id="btn-clear-done" title="Clear completed downloads" hidden><i data-icon="clearList"></i></button>
           <button class="ghost-btn" id="btn-pause-all"><i data-icon="pause"></i>Pause all</button>
           <button class="ghost-btn" id="btn-resume-all"><i data-icon="play"></i>Resume all</button>
           <button class="search-btn" id="btn-search"><i data-icon="search"></i><span>Search</span><kbd>Ctrl K</kbd></button>
@@ -130,6 +131,7 @@
           </div>
           <div class="set-group">
             <label class="set-row"><div class="sr-text"><b>Show a window for each download</b><span>Progress, connections and a "Download complete" summary</span></div><span class="switch"><input type="checkbox" id="set-progress-win"><i></i></span></label>
+            <label class="set-row"><div class="sr-text"><b id="set-start-title">Start with Windows</b><span>Open SwiftDL in the tray when you sign in, so browser downloads are always caught</span></div><span class="switch"><input type="checkbox" id="set-start"><i></i></span></label>
             <label class="set-row"><div class="sr-text"><b>Keep running in the tray</b><span>Closing the window keeps downloads and browser integration going</span></div><span class="switch"><input type="checkbox" id="set-tray"><i></i></span></label>
           </div>
           <div class="set-group">
@@ -169,7 +171,17 @@
           </details>
         </section>
         <section data-panel="about" hidden>
-          <div class="about"><img src="logo.svg" alt="" width="64" height="64"><h2>SwiftDL</h2><p id="version"></p><p class="muted">Fast, resumable downloads with many connections at once.<br>Free and open source.</p></div>
+          <div class="about"><img src="logo.svg" alt="" width="64" height="64"><h2>SwiftDL</h2><p id="version"></p><p class="muted">Fast, resumable downloads with many connections at once.<br>Free and open source.</p>
+            <p><a href="#" class="repo-link" id="repo-link"><i data-icon="link"></i>github.com/SailHighSea/swiftdl</a></p></div>
+          <div class="set-group">
+            <div class="set-row"><div class="sr-text"><b>Updates</b><span id="update-status">Not checked yet</span></div><button type="button" class="btn sm" id="update-check">Check for updates</button></div>
+            <label class="set-row"><div class="sr-text"><b>Check automatically</b><span>Look for a new version when SwiftDL starts, and every few hours</span></div><span class="switch"><input type="checkbox" id="set-autoupdate"><i></i></span></label>
+            <label class="set-row"><div class="sr-text"><b>Include dev builds</b><span>Get early versions (pre-releases) too. They may be less stable.</span></div><span class="switch"><input type="checkbox" id="set-devchannel"><i></i></span></label>
+          </div>
+          <div class="set-group">
+            <label class="set-row"><div class="sr-text"><b>Debug log</b><span>Record more detail to help find problems. Errors and crashes are always recorded.</span></div><span class="switch"><input type="checkbox" id="set-debuglog"><i></i></span></label>
+            <div class="set-row"><div class="sr-text"><b>Log files</b><span id="log-path">Where SwiftDL writes its log</span></div><button type="button" class="btn sm" id="open-logs">Open folder</button></div>
+          </div>
         </section>
         <div class="set-foot">
           <button type="button" class="btn" id="set-cancel">Cancel</button>

@@ -246,7 +246,7 @@ impl DownloadManager {
                 id,
                 url: req.url,
                 filename: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(filename.clone()),
-                category: category_for(&filename).to_string(),
+                category: if req.torrent_files.is_some() { "Torrents".into() } else { category_for(&filename).to_string() },
                 path,
                 size: req.size,
                 downloaded: 0,
@@ -330,7 +330,13 @@ impl DownloadManager {
     pub fn set_settings(self: &Arc<Self>, settings: Settings) {
         self.limiter.set_rate(settings.speed_limit_kib * 1024);
         if let Err(e) = crate::browser::offer_extension(settings.offer_extension) {
-            eprintln!("could not update browser extension offer: {e:#}");
+            crate::applog::error(format!("could not update browser extension offer: {e:#}"));
+        }
+        crate::applog::set_verbose(settings.debug_log);
+        if settings.start_with_system != self.settings().start_with_system {
+            if let Err(e) = crate::autostart::set(settings.start_with_system) {
+                crate::applog::error(format!("could not change start with system: {e:#}"));
+            }
         }
         // Open windows (download windows) follow the theme at once.
         let _ = self.app.emit("settings", &settings);
@@ -372,7 +378,7 @@ impl DownloadManager {
             token
         };
         if let Err(e) = crate::windows::open(&self.app, &format!("new-{token}"), &format!("confirm={token}"), "New download") {
-            eprintln!("could not open the New download window: {e:#}");
+            crate::applog::error(format!("could not open the New download window: {e:#}"));
         }
     }
 
@@ -414,7 +420,7 @@ impl DownloadManager {
         };
         for (id, title) in to_open {
             if let Err(e) = crate::windows::open(&self.app, &format!("dl-{id}"), &format!("id={id}"), &title) {
-                eprintln!("could not open the download window: {e:#}");
+                crate::applog::error(format!("could not open the download window: {e:#}"));
             }
         }
     }
@@ -534,6 +540,7 @@ impl DownloadManager {
                         }
                         Ok(Outcome::Paused) => item.status = Status::Paused,
                         Err(e) => {
+                            crate::applog::info(format!("download failed: {} ({}): {e:#}", item.filename, item.url));
                             item.status = Status::Error;
                             item.error = Some(format!("{e:#}"));
                         }

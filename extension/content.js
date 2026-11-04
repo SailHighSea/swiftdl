@@ -31,6 +31,54 @@
   // and the quality is chosen in SwiftDL.
   const VIDEO_SITE = /(^|\.)(youtube\.com|youtube-nocookie\.com|vimeo\.com|x\.com|twitter\.com|reddit\.com|instagram\.com|tiktok\.com|facebook\.com|twitch\.tv|dailymotion\.com|bilibili\.com)$/i;
   const onVideoSite = () => VIDEO_SITE.test(location.hostname);
+
+  // On feeds (Reddit home, Facebook, YouTube home...) the address bar isn't the
+  // video's page, so yt-dlp says "Unsupported URL". Look for the post or video
+  // link around the player instead, walking out through shadow roots too.
+  const POST_LINK = /\/comments\/[a-z0-9]+|\/(reel|reels|videos|watch|shorts|status|tv|p|video|clip)\/|\/share\/[rvp]\/|[?&]v=|\/posts\/|\/permalink|story_fbid|pfbid|\/stories\/\d+\/[^/?#]+/i;
+  function pageUrlFor(v) {
+    const abs = (h) => { try { return new URL(h, location.href).href; } catch { return null; } };
+    let n = v, depth = 0;
+    while (n && depth < 14) {
+      if (n.getAttribute) {
+        const pl = n.getAttribute("permalink") || n.getAttribute("content-href");
+        if (pl && /\/comments\//.test(pl)) return abs(pl);
+        if (n.tagName === "A" && n.href && POST_LINK.test(n.href)) return n.href;
+      }
+      // Stop once the container holds several videos: a feed's first link
+      // would belong to some other post.
+      if (n.querySelectorAll && n !== v && n.querySelectorAll("video").length > 1) break;
+      if (n.querySelectorAll && n !== document.documentElement) {
+        for (const a of n.querySelectorAll("a[href]")) {
+          if (POST_LINK.test(a.getAttribute("href") || "")) { const u = abs(a.getAttribute("href")); if (u) return u; }
+        }
+      }
+      n = n.parentNode instanceof ShadowRoot ? n.parentNode.host : n.parentNode;
+      depth++;
+    }
+    // Facebook posts nest deeper than the walk above reaches, and fill in a
+    // timestamp link's address only when the pointer touches it.
+    const post = v.closest?.('[role="article"]');
+    if (post) {
+      const find = () => {
+        for (const a of post.querySelectorAll("a[href]")) {
+          const h = a.getAttribute("href") || "";
+          if (POST_LINK.test(h)) return abs(h);
+        }
+        return null;
+      };
+      let u = find();
+      if (u) return u;
+      const stamp = /\b(\d+\s?(s|m|h|d|w|y|min|mins|hr|hrs)|\d+ (second|minute|hour|day|week|year)s?|yesterday|just now)\b/i;
+      for (const a of post.querySelectorAll('a[role="link"], a[href]')) {
+        if (!stamp.test(a.textContent || "") || (a.textContent || "").length > 30) continue;
+        for (const t of ["mouseover", "mouseenter", "mousemove", "focusin"]) a.dispatchEvent(new MouseEvent(t, { bubbles: true, composed: true }));
+        const h = a.getAttribute("href") || "";
+        if (h && h !== "#" && !/^javascript:/i.test(h)) { u = abs(h); if (u && new URL(u).pathname.length > 1) return u; }
+      }
+    }
+    return location.href;
+  }
   const LOGO = `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="1.5" y="1.5" width="21" height="21" rx="6" fill="#2a2c32"/><path d="M8 7l4 4 4-4" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity=".55"/><path d="M8 11.3l4 4 4-4" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><rect x="7.6" y="17" width="8.8" height="1.9" rx=".95" fill="#fff"/></svg>`;
 
   let host, root, wrap, btn, panel, video = null, hideTimer = 0, raf = 0, open = false;
@@ -49,8 +97,8 @@
       .wrap.on { opacity: 1; pointer-events: auto; }
       .btn { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px 0 8px; white-space: nowrap; border: 0; border-radius: 9px;
         background: rgba(20, 21, 26, .86); color: #fff; font-size: 12.5px; font-weight: 600; letter-spacing: -.005em; cursor: pointer;
-        box-shadow: 0 0 0 1px rgba(255,255,255,.12), 0 6px 20px rgba(0,0,0,.35); backdrop-filter: blur(14px) saturate(1.5); }
-      .btn:hover { background: rgba(30, 31, 38, .94); }
+        box-shadow: 0 0 0 2px #3b82f6, 0 6px 20px rgba(0,0,0,.35); backdrop-filter: blur(14px) saturate(1.5); }
+      .btn:hover { background: rgba(30, 31, 38, .94); box-shadow: 0 0 0 2px #60a5fa, 0 6px 20px rgba(0,0,0,.35); }
       .btn .chev { opacity: .6; margin-left: 2px; transition: transform .15s; }
       .wrap.open .btn .chev { transform: rotate(180deg); }
       .panel { width: 320px; max-height: 300px; overflow: auto; padding: 6px; border-radius: 12px; background: rgba(22, 23, 28, .94); color: #eef0f3;
@@ -124,7 +172,14 @@
   async function toggle() {
     if (open) { setOpen(false); return; }
     setOpen(true);
-    if (onVideoSite()) return grab(location.href, title());
+    if (onVideoSite()) {
+      const u = pageUrlFor(video);
+      // A site's front page isn't a video (yt-dlp would only say "Unsupported
+      // URL"), so with no link of its own, e.g. an ad, list the loaded files.
+      // Facebook stories aren't supported by yt-dlp either; those go the file route.
+      const p = new URL(u).pathname.replace(/\/+$/, "");
+      if (p !== "" && !/^\/stories\//i.test(p)) return grab(u, title());
+    }
     panel.innerHTML = `<div class="msg">Looking for downloadable files…</div>`;
     let res;
     try { res = await chrome.runtime.sendMessage({ type: "media" }); } catch { res = { items: [] }; }
@@ -147,7 +202,7 @@
       html += `<div class="head">Streams</div>` + streams.slice(0, 3).map((m) =>
         `<button class="item" disabled><span class="tag stream">${m.kind.toUpperCase()}</span><span class="meta"><b>Streaming video</b><span>Not supported yet</span></span></button>`).join("");
     }
-    if (!files.length && !streams.length) html = `<div class="msg">No downloadable file found yet. Play the video for a moment, then try again.</div>`;
+    if (!files.length && !streams.length) html = `<div class="msg">${onVideoSite() ? "This video has no link of its own (it may be an ad). Open the video's page, for example by clicking its time or title, and try again." : "No downloadable file found yet. Play the video for a moment, then try again."}</div>`;
     else if (!files.length) html += `<div class="msg">This video streams in pieces (HLS/DASH), which SwiftDL can't download yet.</div>`;
     panel.innerHTML = html;
   }
@@ -164,13 +219,31 @@
 
   // Find the video under the pointer, even when the site layers controls
   // on top of it.
+  // Reddit (and others) keep the <video> inside shadow roots, which
+  // document.elementsFromPoint doesn't look into: descend into open ones.
+  function videoAt(e) {
+    const direct = e.composedPath().find((el) => el.tagName === "VIDEO");
+    if (direct) return direct;
+    const seen = new Set();
+    const scan = (rootNode) => {
+      if (seen.has(rootNode)) return null;
+      seen.add(rootNode);
+      for (const el of rootNode.elementsFromPoint(e.clientX, e.clientY)) {
+        if (el.tagName === "VIDEO") return el;
+        if (el.shadowRoot) { const f = scan(el.shadowRoot); if (f) return f; }
+      }
+      return null;
+    };
+    return scan(document);
+  }
+
   let last = 0, disabled = null;
   document.addEventListener("mousemove", async (e) => {
     const now = performance.now();
     if (now - last < 120) return;
     last = now;
     if (host && e.composedPath().includes(host)) return;
-    const v = document.elementsFromPoint(e.clientX, e.clientY).find((el) => el.tagName === "VIDEO");
+    const v = videoAt(e);
     if (v) {
       const r = v.getBoundingClientRect();
       if (r.width < MIN_W || r.height < MIN_H) return;
