@@ -1,0 +1,18 @@
+/* Rounded drop-down menus (see dropdown.js). */
+select.dd-native { display: none; }
+.dd { position: relative; display: inline-block; max-width: 100%; }
+.dd-btn { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; height: 26px; padding: 0 9px 0 10px; border: 0; border-radius: 7px;
+  background: var(--btn-bg); color: var(--text); font: inherit; text-align: left; cursor: default; }
+.dd-btn span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dd-btn svg { flex: none; color: var(--faint); transition: transform .15s; }
+.dd-btn:hover:not(:disabled) { background: var(--btn-hover); }
+.dd-btn:focus-visible, .dd.open .dd-btn { outline: none; box-shadow: inset 0 0 0 1px var(--accent); }
+.dd-btn:disabled { opacity: .55; }
+.dd.open .dd-btn svg { transform: rotate(180deg); }
+.dd-list { position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; min-width: 100%; width: max-content; max-width: 420px; max-height: 220px; overflow-y: auto;
+  padding: 4px; border-radius: 12px; background: var(--panel); box-shadow: 0 0 0 1px var(--border), 0 10px 28px -6px rgba(0, 0, 0, .35); }
+.dd-list[hidden] { display: none; }
+.dd-opt { padding: 6px 10px; border-radius: 8px; font-size: 12.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; }
+.dd-opt.act { background: var(--hover); }
+.dd-opt.on { font-weight: 600; color: var(--accent); }
+.dd-opt[hidden] { display: none; }

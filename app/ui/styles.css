@@ -533,3 +533,10 @@ code { font: 11.5px ui-monospace, "Cascadia Mono", "SF Mono", Consolas, monospac
 ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background-color: var(--faint); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* Video tools download (Settings) */
+#set-tools-bar { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+#set-tools-bar[hidden] { display: none; }
+#set-tools-bar .p-bar { height: 8px; border-radius: 4px; background: var(--track); overflow: hidden; }
+#set-tools-bar .p-bar i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+#set-tools-info { word-break: break-all; }

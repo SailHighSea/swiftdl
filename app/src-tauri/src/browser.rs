@@ -24,7 +24,7 @@ pub const HOST_NAME: &str = "com.swiftdl.host";
 /// Web Store (upload `extension-key.pem` once) so the ID stays the same.
 pub const EXTENSION_IDS: &[&str] = &["knmfjbmojepkdiflnckpfjimfmjfcbgh"];
 /// The Firefox add-on's ID (browser_specific_settings in its manifest).
-pub const FIREFOX_ID: &str = "swiftdl@harshhh.me";
+pub const FIREFOX_ID: &str = "swiftdl@sailhighsea";
 pub const STORE_UPDATE_URL: &str = "https://clients2.google.com/service/update2/crx";
 
 /// Flip to `true` once the extension is live on the Chrome Web Store. Until
@@ -36,9 +36,32 @@ pub fn store_url() -> String {
     format!("https://chromewebstore.google.com/detail/{}", EXTENSION_IDS[0])
 }
 
+/// The folder holding the app when it runs as a portable copy: a file named
+/// `portable` sits next to the program, and settings, downloads and tools are
+/// kept beside it instead of in the user's profile.
+pub fn portable_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?.to_path_buf();
+    if dir.join("portable").exists() {
+        return Some(dir);
+    }
+    // macOS: the program sits in SwiftDL.app/Contents/MacOS, and the marker
+    // beside the .app keeps the bundle itself untouched.
+    #[cfg(target_os = "macos")]
+    if let Some(beside) = dir.ancestors().nth(3) {
+        if beside.join("portable").exists() {
+            return Some(beside.to_path_buf());
+        }
+    }
+    None
+}
+
 /// Same folder Tauri uses for `app_data_dir`, computed without a running
 /// app so the native-host process can use it too.
 pub fn data_dir() -> PathBuf {
+    if let Some(dir) = portable_dir() {
+        return dir.join("data");
+    }
     let id = "com.swiftdl.app";
     #[cfg(windows)]
     let base = std::env::var_os("APPDATA").map(PathBuf::from);
@@ -375,6 +398,10 @@ pub fn open_store_in(app: &AppHandle, browser: &str) -> Result<()> {
 
 /// The unpacked extension shipped inside the installer, for "Load unpacked".
 pub fn bundled_extension_dir(app: &AppHandle) -> Option<PathBuf> {
+    // A portable copy carries the extension beside it.
+    if let Some(dir) = portable_dir().map(|d| d.join("extension")).filter(|d| d.join("manifest.json").exists()) {
+        return Some(dir);
+    }
     let dir = app.path().resource_dir().ok()?.join("extension");
     if dir.join("manifest.json").exists() {
         return Some(dir);

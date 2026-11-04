@@ -60,6 +60,10 @@ pub struct Item {
     /// which go through yt-dlp instead of the engine.
     #[serde(default)]
     pub format: Option<String>,
+    /// Subtitles to fetch with a video: "file:en,fr" (saved beside it) or
+    /// "embed:en" (inside it).
+    #[serde(default)]
+    pub subtitles: Option<String>,
     /// For a torrent or magnet link: the files chosen (empty = all). Its
     /// presence marks the download as a torrent.
     #[serde(default)]
@@ -126,6 +130,9 @@ pub struct AddRequest {
     /// yt-dlp format, for a video-site download (see `Item::format`).
     #[serde(default)]
     pub format: Option<String>,
+    /// See `Item::subtitles`.
+    #[serde(default)]
+    pub subtitles: Option<String>,
     /// Expected size, when known up front (video qualities).
     #[serde(default)]
     pub size: Option<u64>,
@@ -254,6 +261,7 @@ impl DownloadManager {
                 speed: 0.0,
                 connections: 0,
                 format: req.format,
+                subtitles: req.subtitles,
                 torrent_files: req.torrent_files,
                 note: None,
             });
@@ -350,7 +358,7 @@ impl DownloadManager {
             let probed = swiftdl_engine::probe(&this.client, &inc.url, &to_header_map(&headers)).await.ok().map(|r| r.filename);
             let filename = inc.suggested_name().or(probed).unwrap_or_else(|| "download.bin".into());
             let dir = this.default_dir(category_for(&filename));
-            this.add(AddRequest { url: inc.url, filename, dir, headers, start: true, window: None, format: None, size: None, torrent_files: None });
+            this.add(AddRequest { url: inc.url, filename, dir, headers, start: true, window: None, format: None, subtitles: None, size: None, torrent_files: None });
         });
     }
 
@@ -450,7 +458,7 @@ impl DownloadManager {
                     );
                     let kind = match (&item.torrent_files, &item.format) {
                         (Some(files), _) => Kind::Torrent(files.clone()),
-                        (None, Some(format)) => Kind::Media(format.clone()),
+                        (None, Some(format)) => Kind::Media(format.clone(), item.subtitles.clone()),
                         (None, None) => Kind::File,
                     };
                     (id, req, kind, progress, note, cancel)
@@ -465,9 +473,9 @@ impl DownloadManager {
             let this = self.clone();
             tauri::async_runtime::spawn(async move {
                 let result = match kind {
-                    Kind::Media(format) => {
+                    Kind::Media(format, subs) => {
                         let cookies = req.headers.get("cookie").and_then(|v| v.to_str().ok()).map(str::to_string);
-                        let job = crate::media::Job { url: req.url.clone(), format, dest: req.dest.clone(), cookies };
+                        let job = crate::media::Job { url: req.url.clone(), format, subs, dest: req.dest.clone(), cookies };
                         crate::media::run(&this.client, job, progress, note, cancel).await
                     }
                     Kind::Torrent(files) => {
@@ -614,7 +622,7 @@ impl DownloadManager {
 enum Kind {
     File,
     /// A video site, through yt-dlp, with this format.
-    Media(String),
+    Media(String, Option<String>),
     /// A torrent or magnet link, with these files (empty = all).
     Torrent(Vec<usize>),
 }

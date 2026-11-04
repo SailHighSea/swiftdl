@@ -6,7 +6,7 @@
 use std::fs;
 use std::path::Path;
 
-const FIREFOX_ID: &str = "swiftdl@harshhh.me"; // also in src/browser.rs
+const FIREFOX_ID: &str = "swiftdl@sailhighsea"; // also in src/browser.rs
 
 fn main() {
     let src = Path::new("../../extension");

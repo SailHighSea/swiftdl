@@ -57,6 +57,11 @@ fn main() {
         native_host::run();
         return;
     }
+    // A portable copy keeps the web view's data beside it too.
+    if let Some(dir) = browser::portable_dir() {
+        // SAFETY: nothing else is running yet.
+        unsafe { std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", dir.join("data").join("webview")) };
+    }
 
     tauri::Builder::default()
         // Must be first: a second launch (e.g. from the extension) hands its
@@ -72,7 +77,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .setup(move |app| {
-            let data_dir = app.path().app_data_dir()?;
+            let data_dir = browser::data_dir();
             let downloads = app.path().download_dir().unwrap_or_else(|_| data_dir.join("Downloads"));
             let mgr = DownloadManager::new(app.handle().clone(), data_dir.clone(), downloads)?;
             if let Err(e) = browser::register(&data_dir) {
@@ -104,6 +109,9 @@ fn main() {
             commands::get_state,
             commands::probe_url,
             commands::probe_media,
+            commands::tools_status,
+            commands::install_tools,
+            commands::tools_note,
             commands::is_media_url,
             commands::is_torrent_url,
             commands::probe_torrent,

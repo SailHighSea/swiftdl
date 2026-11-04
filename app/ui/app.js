@@ -837,6 +837,7 @@ function openSettings(tab = "general") {
   $("set-progress-win").checked = s.showProgressWindow;
   $("set-tray").checked = s.closeToTray;
   loadIntegration();
+  loadTools();
   $("set-conns").value = s.connections;
   $("set-concurrent").value = s.maxConcurrent;
   setLimitKib = s.speedLimitKib;
@@ -844,6 +845,32 @@ function openSettings(tab = "general") {
   showTab(tab);
   $("dlg-settings").showModal();
 }
+// yt-dlp, deno and ffmpeg: what video downloads need, and where they live.
+async function loadTools() {
+  const t = await call("tools_status").catch(() => null);
+  if (!t) return;
+  const have = [["yt-dlp", t.ytdlp], ["deno", t.deno], ["ffmpeg", t.ffmpeg]].map(([n, ok]) => `${n}: ${ok ? "ready" : "missing"}`).join(" - ");
+  $("set-tools-info").textContent = `${have}. Saved to ${t.dir}${t.portable ? " (portable)" : ""}`;
+  const missing = !t.ytdlp || !t.deno || (!t.ffmpeg && t.ffmpegDownloadable);
+  $("set-tools-go").hidden = !missing;
+  $("set-tools-go").disabled = false;
+}
+$("set-tools-go").onclick = async () => {
+  const bar = $("set-tools-bar"), go = $("set-tools-go");
+  go.disabled = true; bar.hidden = false;
+  const poll = setInterval(async () => {
+    const note = await call("tools_note").catch(() => null);
+    if (!note) return;
+    $("set-tools-note").textContent = note;
+    const pct = /(\d+)%/.exec(note);
+    bar.querySelector("i").style.width = pct ? `${pct[1]}%` : "100%";
+  }, 250);
+  try { await call("install_tools"); toast("Video tools are ready"); }
+  catch (e) { toast(String(e)); }
+  clearInterval(poll);
+  bar.hidden = true;
+  loadTools();
+};
 function renderLimits() {
   $("set-limits").innerHTML = LIMITS.map((k) => `<button type="button" data-k="${k}" class="${k === setLimitKib ? "on" : ""}">${k ? bytes(k * 1024) + "/s" : "Off"}</button>`).join("");
   const c = $("set-limit-custom");

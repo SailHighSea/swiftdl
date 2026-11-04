@@ -185,3 +185,19 @@ pub async fn probe_media(m: Mgr<'_>, url: String, cookies: Option<String>) -> Re
 pub fn open_new_download(m: Mgr, url: String) {
     m.new_download_window(Incoming { url: url.trim().to_string(), filename: None, referrer: None, cookies: None, user_agent: None });
 }
+
+#[tauri::command]
+pub fn tools_status() -> crate::media::ToolsStatus {
+    crate::media::tools_status()
+}
+
+#[tauri::command]
+pub async fn install_tools(m: Mgr<'_>) -> Result<(), String> {
+    crate::media::install_tools(m.client()).await.map_err(|e| format!("{e:#}"))
+}
+
+/// What the tool download is doing, or `None` when idle.
+#[tauri::command]
+pub fn tools_note() -> Option<String> {
+    crate::media::SETUP_NOTE.lock().unwrap().clone()
+}
