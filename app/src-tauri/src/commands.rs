@@ -54,13 +54,54 @@ pub fn default_dir(m: Mgr, filename: String) -> PathBuf {
 
 #[tauri::command]
 pub fn add_download(m: Mgr, req: AddRequest) -> Result<u64, String> {
-    if !req.url.starts_with("http://") && !req.url.starts_with("https://") {
-        return Err("Only http:// and https:// links are supported".into());
+    check_add(&req)?;
+    Ok(m.add(req))
+}
+
+/// What a download may come from: web links, and for torrents also magnet
+/// links and .torrent files on this computer.
+fn check_add(req: &AddRequest) -> Result<(), String> {
+    let url = req.url.trim();
+    let web = url.starts_with("http://") || url.starts_with("https://");
+    let torrent = req.torrent_files.is_some() && (url.starts_with("magnet:") || std::path::Path::new(url).is_file());
+    if !web && !torrent {
+        return Err("Only web links, magnet links and .torrent files are supported".into());
     }
     if req.filename.trim().is_empty() {
         return Err("File name is empty".into());
     }
-    Ok(m.add(req))
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req(url: &str, torrent: bool) -> AddRequest {
+        serde_json::from_value(serde_json::json!({
+            "url": url, "filename": "name", "dir": "C:/Downloads", "start": true,
+            "torrentFiles": if torrent { serde_json::json!([]) } else { serde_json::Value::Null },
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn accepts_every_kind_of_source() {
+        assert!(check_add(&req("https://example.com/a.iso", false)).is_ok());
+        assert!(check_add(&req("magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c", true)).is_ok());
+        assert!(check_add(&req("https://example.com/a.torrent", true)).is_ok());
+        let file = std::env::temp_dir().join("swiftdl-test.torrent");
+        std::fs::write(&file, b"d4:infod4:name1:aee").unwrap();
+        assert!(check_add(&req(&file.to_string_lossy(), true)).is_ok(), "a .torrent file on disk");
+        let _ = std::fs::remove_file(file);
+    }
+
+    #[test]
+    fn refuses_other_sources() {
+        assert!(check_add(&req("magnet:?xt=urn:btih:abc", false)).is_err(), "magnet only as a torrent");
+        assert!(check_add(&req("file:///etc/passwd", false)).is_err());
+        assert!(check_add(&req("C:/not/there.torrent", true)).is_err());
+    }
 }
 
 #[tauri::command]

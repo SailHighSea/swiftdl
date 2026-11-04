@@ -435,22 +435,22 @@ async function openStore(browser) {
 function renderBrowserPanel() {
   const i = state.integration;
   if (!i) return;
-  $("ext-status").className = `ext-status ${i.lastSeen ? "ok" : ""}`;
   const store = i.storeAvailable;
   const hint = store ? "Add it to a browser below, then open that browser once" : "Follow the steps below, then open the browser once";
-  const where = i.browsers.filter((b) => b.lastSeen).map((b) => b.name);
-  const title = where.length ? `Extension connected in ${where.join(", ").replace(/, ([^,]*)$/, " and $1")}` : "Extension not connected yet";
-  $("ext-status").innerHTML = `<span class="dot"></span><div class="sr-text"><b>${title}</b><span>${i.lastSeen ? `Last active ${when(i.lastSeen).toLowerCase()}` : hint}</span></div>`;
+  const connected = i.browsers.filter((b) => b.lastSeen).sort((a, b) => b.lastSeen - a.lastSeen);
+  const logo = (b, cls = "") => `<img class="blogo ${cls}" src="browsers/${b.id}.svg" alt="" width="28" height="28">`;
+  $("ext-status").innerHTML = connected.length
+    ? `${logo(connected[0])}<div class="sr-text"><b>Connected in ${connected.map((b) => b.name).join(", ").replace(/, ([^,]*)$/, " and $1")}</b><span>Last active ${when(connected[0].lastSeen).toLowerCase()}</span></div>`
+    : `<div class="sr-text"><b>Not connected yet</b><span>${hint}</span></div>`;
   const rank = (b) => (b.lastSeen ? 2 : b.installed ? 1 : 0);
   $("browser-list").innerHTML = [...i.browsers].sort((a, b) => rank(b) - rank(a)).map((b) => {
-    const sub = b.lastSeen ? `Extension connected · last active ${when(b.lastSeen).toLowerCase()}`
+    const sub = b.lastSeen ? `Connected · last active ${when(b.lastSeen).toLowerCase()}`
       : !b.installed ? "Not installed"
       : store && b.autoOffer ? "Installed · asks to enable the extension on next start" : "Installed";
     return `<div class="set-row">
-      <span class="bmono ${b.installed || b.lastSeen ? "" : "off"}">${icon("globe")}</span>
+      ${logo(b, b.installed || b.lastSeen ? "" : "off")}
       <div class="sr-text"><b>${b.name}</b><span>${sub}</span></div>
-      ${b.lastSeen ? `<span class="b-ok"><span class="dot"></span>Connected</span>`
-        : b.installed && store ? `<button type="button" class="btn sm" data-store="${b.id}">Add extension</button>` : ""}</div>`;
+      ${!b.lastSeen && b.installed && store ? `<button type="button" class="btn sm" data-store="${b.id}">Add extension</button>` : ""}</div>`;
   }).join("");
   // No store listing yet: show the manual steps up front, and hide the
   // automatic offer, which only works once the extension is on the store.
@@ -622,7 +622,7 @@ document.addEventListener("keydown", (e) => {
   else if (k === "Escape") { state.selected = null; render(); }
 });
 
-const firstUrl = (t) => (t || "").split(/\s+/).find((s) => /^https?:\/\/\S+$/i.test(s));
+const firstUrl = (t) => (t || "").split(/\s+/).find((s) => /^(https?:\/\/|magnet:\?)\S+$/i.test(s));
 document.addEventListener("paste", (e) => {
   if (document.querySelector("dialog[open]") || e.target.matches?.("input")) return;
   const url = firstUrl(e.clipboardData.getData("text"));
@@ -744,7 +744,7 @@ function renderChips() {
 }
 async function probe() {
   const url = $("add-url").value.trim();
-  if (!/^https?:\/\/\S+/i.test(url)) { add.info = null; $("add-file").hidden = true; renderChips(); url ? setState("error", "Links start with http:// or https://") : setState("idle"); return; }
+  if (!/^(https?:\/\/|magnet:\?)\S+/i.test(url)) { add.info = null; $("add-file").hidden = true; renderChips(); url ? setState("error", "Paste a web link (http:// or https://) or a magnet link") : setState("idle"); return; }
   const seq = ++add.seq;
   // Video sites need a quality and torrents a file choice: their own window.
   const special = await invoke("is_media_url", { url }).catch(() => false) || await invoke("is_torrent_url", { url, filename: null }).catch(() => false);

@@ -110,3 +110,5 @@ body.dlw { overflow: hidden; --win-edge: rgba(0, 0, 0, .1); }
 .kv .chk input { accent-color: var(--accent); margin: 0; }
 .kv .chk:has(input:disabled) { opacity: .5; }
 .kv .desc { white-space: normal; }
+
+.add-err { margin: 16px 0 -6px; font-size: 13px; }

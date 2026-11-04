@@ -88,6 +88,18 @@ document.addEventListener("contextmenu", (e) => { if (!e.target.closest("input")
 
 const params = new URLSearchParams(location.search);
 
+// Adds the download, or shows why it couldn't be added above the buttons
+// (a failed click must never just do nothing). Returns its id, or null.
+async function addDownload(req) {
+  view.querySelector(".add-err")?.remove();
+  try {
+    return await invoke("add_download", { req });
+  } catch (e) {
+    view.querySelector(".d-foot")?.insertAdjacentHTML("beforebegin", `<p class="err add-err">Couldn't add the download: ${esc(String(e))}</p>`);
+    return null;
+  }
+}
+
 // ---------- New download (caught from the browser) ----------
 async function confirmView(token) {
   setTitle("New download");
@@ -140,7 +152,8 @@ async function confirmView(token) {
   const add = async (start) => {
     const filename = $("c-name").value.trim();
     if (!filename) return;
-    const id = await invoke("add_download", { req: { url: inc.url, filename, dir, headers, start, window: win?.label } });
+    const id = await addDownload({ url: inc.url, filename, dir, headers, start, window: win?.label });
+    if (id == null) return;
     invoke("forget_confirm", { token });
     if (!start) { $("w-close").click(); return; }
     history.replaceState(null, "", `?id=${id}`);
@@ -461,7 +474,8 @@ async function mediaView(token, inc, settings, headers) {
     const filename = safeName($("c-name").value);
     const p = info && pick();
     if (!filename || !p?.ok) return;
-    const id = await invoke("add_download", { req: { url: inc.url, filename, dir, headers, start, window: win?.label, format: p.format, subtitles: subs(), size: p.size ?? null } });
+    const id = await addDownload({ url: inc.url, filename, dir, headers, start, window: win?.label, format: p.format, subtitles: subs(), size: p.size ?? null });
+    if (id == null) return;
     invoke("forget_confirm", { token });
     if (!start) { $("w-close").click(); return; }
     history.replaceState(null, "", `?id=${id}`);
@@ -522,7 +536,8 @@ async function torrentView(token, inc, settings, headers) {
     if (!sel.length) return;
     const files = sel.length === info.files.length ? [] : sel;
     const size = sel.reduce((a, i) => a + info.files[i].size, 0);
-    const id = await invoke("add_download", { req: { url: inc.url, filename: info.name, dir, headers, start, window: win?.label, size, torrentFiles: files } });
+    const id = await addDownload({ url: inc.url, filename: info.name, dir, headers, start, window: win?.label, size, torrentFiles: files });
+    if (id == null) return;
     invoke("forget_confirm", { token });
     if (!start) { $("w-close").click(); return; }
     history.replaceState(null, "", `?id=${id}`);

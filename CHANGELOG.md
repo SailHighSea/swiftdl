@@ -6,8 +6,17 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-04
+
+### Fixed
+- **Magnet links and .torrent files did nothing** when you clicked Start
+  download or Download later: adding a download only accepted web links, and
+  the window didn't show the error. Magnet links and .torrent files on your
+  computer are now accepted, pasting a magnet link into New download works,
+  and any error adding a download is shown in the window.
+
 ### Added
-- **Firefox add-on.** The extension now runs in Firefox 128 and later, built
+- **Firefox add-on.** The extension now runs in Firefox 140 and later, built
   from the same code with Firefox's manifest and shipped with the app and as
   `swiftdl-firefox.xpi`. SwiftDL registers its native messaging host for
   Firefox, and Settings → Browser lists Firefox.
@@ -128,7 +137,8 @@ uses [Semantic Versioning](https://semver.org/).
 - GitHub Actions for CI and tagged releases (Windows, macOS, Linux and the
   extension zip).
 
-[Unreleased]: https://github.com/harshsinghsv/swiftdl/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/harshsinghsv/swiftdl/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/harshsinghsv/swiftdl/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/harshsinghsv/swiftdl/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/harshsinghsv/swiftdl/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/harshsinghsv/swiftdl/compare/v0.2.1...v0.2.2
