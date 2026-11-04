@@ -111,6 +111,11 @@ async function confirmView(token) {
   if (inc.cookies) headers.push(["Cookie", inc.cookies]);
   if (inc.referrer) headers.push(["Referer", inc.referrer]);
   if (inc.userAgent) headers.push(["User-Agent", inc.userAgent]);
+  // A download the page started with a form POST: the app repeats the POST.
+  if (inc.method === "POST" && inc.body) {
+    headers.push(["X-SwiftDL-Method", "POST"], ["X-SwiftDL-Body", inc.body]);
+    if (inc.contentType) headers.push(["Content-Type", inc.contentType]);
+  }
   let dir = settings.downloadDir, dirTouched = false, info = null;
   if (await invoke("is_media_url", { url: inc.url })) return mediaView(token, inc, settings, headers);
   if (await invoke("is_torrent_url", { url: inc.url, filename: inc.filename || null })) return torrentView(token, inc, settings, headers);
@@ -135,7 +140,7 @@ async function confirmView(token) {
   $("c-start").focus();
 
   try {
-    info = await invoke("probe_url", { url: inc.url, headers });
+    info = await invoke("probe_url", { url: inc.url, headers, filename: inc.filename || null });
     const suggested = /\.[a-z0-9]{2,5}$/i.test(inc.filename || "") ? inc.filename.split(/[\\/]/).pop() : "";
     $("c-name").value = suggested || info.filename;
     $("c-cat").value = info.category;
@@ -660,7 +665,7 @@ view.addEventListener("click", async (e) => {
     case "pause": invoke("pause", { ids: [id] }); break;
     case "resume": layout = ""; invoke("resume", { ids: [id] }); break;
     case "open": invoke("open_file", { id }); $("w-close").click(); break;
-    case "folder": invoke("open_folder", { id }); break;
+    case "folder": invoke("open_folder", { id }); $("w-close").click(); break;
     case "close": $("w-close").click(); break;
     case "cancel":
       // Ask twice instead of a second dialog: the button arms for 3 s.

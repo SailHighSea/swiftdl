@@ -21,6 +21,13 @@ uses [Semantic Versioning](https://semver.org/).
 - The video button now finds videos inside shadow DOM, so it appears on more
   sites, and on feeds it sends the video's own link instead of the site's
   front page.
+- OneDrive/SharePoint "download as zip" (and other downloads a page starts
+  with a form button) failed with "405 Method Not Allowed", because SwiftDL
+  could only repeat a plain GET. The extension now passes the form's POST
+  request to the app, which repeats it (one connection, no resume). A
+  "Form (POST) downloads" switch in the extension popup turns this off so the
+  browser handles them; the per-site switch already skips a whole site.
+- Show in folder on the download-complete window now closes the window.
 
 ## [0.3.1] - 2026-11-04
 

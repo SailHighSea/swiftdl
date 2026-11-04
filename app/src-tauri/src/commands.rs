@@ -35,7 +35,14 @@ pub fn get_state(m: Mgr) -> AppState {
 }
 
 #[tauri::command]
-pub async fn probe_url(m: Mgr<'_>, url: String, headers: Vec<(String, String)>) -> Result<ProbeInfo, String> {
+pub async fn probe_url(m: Mgr<'_>, url: String, headers: Vec<(String, String)>, filename: Option<String>) -> Result<ProbeInfo, String> {
+    // A POST download is never probed (a second request could be refused):
+    // the name the browser saw is all we know until it starts.
+    if crate::manager::post_body(&headers).is_some() {
+        let filename = filename.filter(|f| !f.trim().is_empty()).unwrap_or_else(|| "download.bin".into());
+        let category = category_for(&filename).to_string();
+        return Ok(ProbeInfo { dir: m.default_dir(&category), filename, size: None, resumable: false, category });
+    }
     let remote = swiftdl_engine::probe(m.client(), url.trim(), &to_header_map(&headers)).await.map_err(|e| format!("{e:#}"))?;
     let category = category_for(&remote.filename).to_string();
     Ok(ProbeInfo {
@@ -245,7 +252,7 @@ pub async fn probe_media(m: Mgr<'_>, url: String, cookies: Option<String>) -> Re
 /// "New download" window, like a link caught from the browser.
 #[tauri::command]
 pub fn open_new_download(m: Mgr, url: String) {
-    m.new_download_window(Incoming { url: url.trim().to_string(), filename: None, referrer: None, cookies: None, user_agent: None });
+    m.new_download_window(Incoming { url: url.trim().to_string(), filename: None, referrer: None, cookies: None, user_agent: None, method: None, body: None, content_type: None });
 }
 
 #[tauri::command]

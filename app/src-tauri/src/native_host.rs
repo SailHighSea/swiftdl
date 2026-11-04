@@ -56,10 +56,32 @@ fn handle(msg: &[u8]) -> Value {
     };
     match v["type"].as_str() {
         Some("ping") => json!({ "ok": true, "version": env!("CARGO_PKG_VERSION") }),
-        Some("download") if v["url"].is_string() => reply(launch_app(&["--add", &URL_SAFE_NO_PAD.encode(msg)])),
+        Some("download") if v["url"].is_string() => reply(send_download(msg)),
         Some("show") => reply(launch_app(&[])),
         _ => json!({ "ok": false, "error": "unknown message" }),
     }
+}
+
+/// Hands a download to the app. Windows limits a command line to ~32 K, so a
+/// big message (a POST download's form data) goes through a temp file.
+fn send_download(msg: &[u8]) -> io::Result<()> {
+    let encoded = URL_SAFE_NO_PAD.encode(msg);
+    if encoded.len() < 16_000 {
+        return launch_app(&["--add", &encoded]);
+    }
+    let dir = std::env::temp_dir();
+    // Leftovers from a download the app never picked up.
+    for e in std::fs::read_dir(&dir)?.flatten() {
+        let old = e.file_name().to_string_lossy().starts_with("swiftdl-add-")
+            && e.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|a| a.as_secs() > 3600);
+        if old {
+            let _ = std::fs::remove_file(e.path());
+        }
+    }
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let path = dir.join(format!("swiftdl-add-{}-{nanos}.json", std::process::id()));
+    std::fs::write(&path, msg)?;
+    launch_app(&["--add-file", &path.to_string_lossy()])
 }
 
 /// Starts the app with `args`. If it is already open, the single-instance
@@ -231,6 +253,12 @@ mod process_tree {
 
 /// Pulls the `--add <payload>` the host passed on, if any.
 pub fn parse_add_arg(args: &[String]) -> Option<crate::manager::Incoming> {
+    if let Some(i) = args.iter().position(|a| a == "--add-file") {
+        let path = args.get(i + 1)?;
+        let raw = std::fs::read(path).ok()?;
+        let _ = std::fs::remove_file(path);
+        return serde_json::from_slice(&raw).ok();
+    }
     let i = args.iter().position(|a| a == "--add")?;
     let raw = URL_SAFE_NO_PAD.decode(args.get(i + 1)?).ok()?;
     serde_json::from_slice(&raw).ok()

@@ -87,6 +87,26 @@ pub struct Incoming {
     pub cookies: Option<String>,
     #[serde(default)]
     pub user_agent: Option<String>,
+    /// "POST" when the page started the download with a form POST.
+    #[serde(default)]
+    pub method: Option<String>,
+    /// The POST body, base64.
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub content_type: Option<String>,
+}
+
+/// Pseudo-headers that carry a POST download's method and body along with
+/// its real headers (UI, saved list, resume). Never sent to the server.
+pub const POST_METHOD: &str = "X-SwiftDL-Method";
+pub const POST_BODY: &str = "X-SwiftDL-Body";
+
+/// The base64 POST body among `headers`, decoded.
+pub fn post_body(headers: &[(String, String)]) -> Option<Vec<u8>> {
+    use base64::Engine;
+    let (_, b) = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(POST_BODY))?;
+    base64::engine::general_purpose::STANDARD.decode(b).ok()
 }
 
 impl Incoming {
@@ -108,6 +128,13 @@ impl Incoming {
         }
         if let Some(u) = self.user_agent.as_ref().filter(|u| !u.is_empty()) {
             h.push(("User-Agent".into(), u.clone()));
+        }
+        if let (Some(b), true) = (self.body.as_ref().filter(|b| !b.is_empty()), self.method.as_deref() == Some("POST")) {
+            h.push((POST_METHOD.into(), "POST".into()));
+            h.push((POST_BODY.into(), b.clone()));
+            if let Some(c) = self.content_type.as_ref().filter(|c| !c.is_empty()) {
+                h.push(("Content-Type".into(), c.clone()));
+            }
         }
         h
     }
@@ -361,7 +388,12 @@ impl DownloadManager {
         let this = self.clone();
         tauri::async_runtime::spawn(async move {
             let headers = inc.headers();
-            let probed = swiftdl_engine::probe(&this.client, &inc.url, &to_header_map(&headers)).await.ok().map(|r| r.filename);
+            // A POST download can't be probed (that would be a second request).
+            let probed = if post_body(&headers).is_some() {
+                None
+            } else {
+                swiftdl_engine::probe(&this.client, &inc.url, &to_header_map(&headers)).await.ok().map(|r| r.filename)
+            };
             let filename = inc.suggested_name().or(probed).unwrap_or_else(|| "download.bin".into());
             let dir = this.default_dir(category_for(&filename));
             this.add(AddRequest { url: inc.url, filename, dir, headers, start: true, window: None, format: None, subtitles: None, size: None, torrent_files: None });
@@ -445,6 +477,7 @@ impl DownloadManager {
                         connections,
                         headers: to_header_map(&item.headers),
                         restart: false,
+                        post_body: post_body(&item.headers),
                     };
                     let progress = Arc::new(Progress::default());
                     progress.downloaded.store(item.downloaded, Ordering::Relaxed);
@@ -637,6 +670,9 @@ enum Kind {
 pub fn to_header_map(headers: &[(String, String)]) -> HeaderMap {
     let mut map = HeaderMap::new();
     for (k, v) in headers {
+        if k.eq_ignore_ascii_case(POST_METHOD) || k.eq_ignore_ascii_case(POST_BODY) {
+            continue;
+        }
         if let (Ok(k), Ok(v)) = (HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_str(v)) {
             map.insert(k, v);
         }

@@ -160,7 +160,8 @@ What it does:
 - Adds **Download with SwiftDL** to the right-click menu on links and media.
 - Shows a **Download video** button over video players.
 - Hold <kbd>Alt</kbd> while clicking a link to let the browser handle that download.
-- Can be turned off for a single site from its popup.
+- Catches downloads that a page starts with a form button (OneDrive and SharePoint "Download" on several files, for example) by repeating the same request. These run on one connection and can't resume.
+- Can be turned off for a single site, or for form downloads only, from its popup.
 
 Open SwiftDL once after installing it: it registers itself with every browser it finds, so the extension can reach it. Then add the extension for your browser. In SwiftDL, **Settings → Browser** shows the steps and opens the extension folder.
 

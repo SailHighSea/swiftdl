@@ -179,7 +179,7 @@ fn main() {
                     };
                     if let (Some(link), Some(mgr)) = (link, _app.try_state::<Arc<DownloadManager>>()) {
                         if torrent::is_torrent(&link, None) {
-                            mgr.incoming(manager::Incoming { url: link, filename: None, referrer: None, cookies: None, user_agent: None });
+                            mgr.incoming(manager::Incoming { url: link, filename: None, referrer: None, cookies: None, user_agent: None, method: None, body: None, content_type: None });
                         }
                     }
                 }

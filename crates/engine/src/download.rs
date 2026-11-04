@@ -32,6 +32,9 @@ pub struct Request {
     pub headers: header::HeaderMap,
     /// Ignore any saved progress and start over.
     pub restart: bool,
+    /// When set, the file is fetched with a POST carrying this body (a form
+    /// button on a web page). Such downloads are one stream, not resumable.
+    pub post_body: Option<Vec<u8>>,
 }
 
 /// Live numbers a front end can poll from any thread.
@@ -138,6 +141,9 @@ pub async fn run(
     cancel: CancellationToken,
     limiter: Arc<SpeedLimiter>,
 ) -> Result<Outcome> {
+    if let Some(body) = &req.post_body {
+        return run_post(client, req, body, progress, cancel, limiter).await;
+    }
     let remote = tokio::select! {
         r = probe(client, &req.url, &req.headers) => r?,
         _ = cancel.cancelled() => return Ok(Outcome::Paused),
@@ -356,8 +362,48 @@ async fn download_single(
     cancel: CancellationToken,
     limiter: Arc<SpeedLimiter>,
 ) -> Result<Outcome> {
-    use std::io::Write;
     let resp = client.get(&remote.url).headers(req.headers.clone()).send().await?.error_for_status()?;
+    stream_to_part(resp, part, progress, cancel, limiter).await
+}
+
+/// A download that needs a POST: the one response is the file, so it is
+/// streamed straight to disk (a second request could be refused).
+async fn run_post(
+    client: &Client,
+    req: &Request,
+    post_body: &[u8],
+    progress: Arc<Progress>,
+    cancel: CancellationToken,
+    limiter: Arc<SpeedLimiter>,
+) -> Result<Outcome> {
+    if let Some(dir) = req.dest.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir).with_context(|| format!("could not create {}", dir.display()))?;
+    }
+    let resp = tokio::select! {
+        r = client.post(&req.url).headers(req.headers.clone()).body(post_body.to_vec()).send() => r?.error_for_status()?,
+        _ = cancel.cancelled() => return Ok(Outcome::Paused),
+    };
+    progress.total.store(resp.content_length().unwrap_or(0), Ordering::Relaxed);
+    progress.resumable.store(false, Ordering::Relaxed);
+    let part = part_path(&req.dest);
+    let outcome = stream_to_part(resp, &part, progress, cancel, limiter).await?;
+    if outcome == Outcome::Completed {
+        if req.dest.exists() {
+            std::fs::remove_file(&req.dest)?;
+        }
+        std::fs::rename(&part, &req.dest).with_context(|| format!("could not rename to {}", req.dest.display()))?;
+    }
+    Ok(outcome)
+}
+
+async fn stream_to_part(
+    resp: reqwest::Response,
+    part: &Path,
+    progress: Arc<Progress>,
+    cancel: CancellationToken,
+    limiter: Arc<SpeedLimiter>,
+) -> Result<Outcome> {
+    use std::io::Write;
     let mut file = std::io::BufWriter::new(File::create(part)?);
     let mut body = resp.bytes_stream();
     progress.downloaded.store(0, Ordering::Relaxed);

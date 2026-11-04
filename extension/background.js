@@ -8,7 +8,7 @@
 //    page button and the popup can offer them for download.
 
 const HOST = "com.swiftdl.host";
-const DEFAULTS = { enabled: true, minSizeKB: 0, disabledSites: [] };
+const DEFAULTS = { enabled: true, minSizeKB: 0, disabledSites: [], capturePost: true };
 
 const getSettings = () => chrome.storage.sync.get(DEFAULTS);
 const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; } };
@@ -22,6 +22,12 @@ async function log(event) {
   await chrome.storage.local.set({ log: entries.slice(-30) });
 }
 
+// Firefox doesn't grant a Manifest V3 add-on its site access automatically;
+// without it webRequest sees nothing (no POST bodies, no video detection).
+chrome.permissions?.contains({ origins: ["<all_urls>"] })
+  .then((ok) => log(ok ? "site access granted" : "site access NOT granted: allow it in about:addons > SwiftDL > Permissions"))
+  .catch(() => {});
+
 // ---------- talking to the app ----------
 
 async function cookieHeader(url) {
@@ -33,7 +39,7 @@ async function cookieHeader(url) {
   }
 }
 
-async function sendToApp({ url, referrer, filename }) {
+async function sendToApp({ url, referrer, filename, post }) {
   const message = {
     type: "download",
     url,
@@ -41,6 +47,7 @@ async function sendToApp({ url, referrer, filename }) {
     filename: filename ? filename.split(/[\\/]/).pop() : "",
     cookies: await cookieHeader(url),
     userAgent: navigator.userAgent,
+    ...(post ? { method: "POST", body: post.body, contentType: post.contentType } : {}),
   };
   const reply = await chrome.runtime.sendNativeMessage(HOST, message);
   if (!reply?.ok) throw new Error(reply?.error || "SwiftDL did not accept the download");
@@ -62,10 +69,105 @@ function flashBadge(text, color, tabId) {
 // Hold Alt while clicking a link to let the browser download it instead.
 let bypassUntil = 0;
 
-async function siteDisabled(url) {
+// True when the site the download came from, its referrer or the page the
+// user is on is switched off. (A download's own host is often a CDN, not the
+// site the user sees, e.g. OneDrive pages download from svc.ms.)
+async function siteDisabled(...urls) {
   const { disabledSites } = await getSettings();
-  const host = hostOf(url);
-  return !!host && disabledSites.includes(host);
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (tab?.url) urls.push(tab.url);
+  } catch {}
+  return urls.some((u) => { const host = hostOf(u); return !!host && disabledSites.includes(host); });
+}
+
+// Downloads that start from a POST (OneDrive/SharePoint "download as zip",
+// form buttons). The downloads API doesn't say which method was used or what
+// was sent, so watch POST requests and keep their body for a short while; if
+// a download then starts from one, the app repeats the same POST.
+const MAX_POST_BODY = 512 * 1024; // bigger bodies are left to the browser
+const posts = new Map(); // exact url -> record
+const postsById = new Map(); // requestId -> record
+const WEB = { urls: ["http://*/*", "https://*/*"] };
+
+function prunePosts() {
+  const old = Date.now() - 120000;
+  for (const [u, r] of posts) if (r.at < old) { posts.delete(u); postsById.delete(r.id); }
+}
+
+chrome.webRequest.onBeforeRequest.addListener(
+  (d) => {
+    if (d.method !== "POST") return;
+    const rec = { id: d.requestId, url: d.url, at: Date.now(), raw: null, form: null, tooBig: false, contentType: "", filename: "" };
+    const rb = d.requestBody;
+    if (rb?.raw?.length) {
+      const parts = rb.raw.map((p) => (p.bytes ? new Uint8Array(p.bytes) : null));
+      const total = parts.reduce((n, p) => n + (p ? p.length : 0), 0);
+      if (parts.some((p) => !p) || total > MAX_POST_BODY) rec.tooBig = true; // file uploads etc.
+      else {
+        rec.raw = new Uint8Array(total);
+        let o = 0;
+        for (const p of parts) { rec.raw.set(p, o); o += p.length; }
+      }
+    } else if (rb?.formData) {
+      const p = new URLSearchParams();
+      for (const [k, vs] of Object.entries(rb.formData)) for (const v of vs) p.append(k, v);
+      rec.form = p.toString();
+      if (rec.form.length > MAX_POST_BODY) rec.tooBig = true;
+    }
+    prunePosts();
+    posts.set(d.url, rec);
+    postsById.set(d.requestId, rec);
+    log(`POST ${noQuery(d.url)} body=${rec.raw ? rec.raw.length : rec.form != null ? rec.form.length : 0}${rec.tooBig ? " (too big)" : ""}`);
+  },
+  WEB,
+  ["requestBody"],
+);
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  (d) => {
+    const rec = postsById.get(d.requestId);
+    if (rec) rec.contentType = header(d.requestHeaders, "content-type");
+  },
+  WEB,
+  ["requestHeaders"],
+);
+chrome.webRequest.onHeadersReceived.addListener(
+  (d) => {
+    const rec = postsById.get(d.requestId);
+    if (!rec) return;
+    const cd = header(d.responseHeaders, "content-disposition");
+    const star = /filename\*\s*=\s*[^']*'[^']*'([^;]+)/i.exec(cd);
+    const plain = /filename\s*=\s*("([^"]+)"|[^;]+)/i.exec(cd);
+    try { rec.filename = star ? decodeURIComponent(star[1].trim()) : plain ? (plain[2] || plain[1]).trim() : ""; } catch { rec.filename = plain?.[2] || ""; }
+  },
+  WEB,
+  ["responseHeaders"],
+);
+// A POST often answers with a redirect to the file; the download then shows
+// the redirect target as its URL, so remember that it came from the POST.
+chrome.webRequest.onBeforeRedirect.addListener(
+  (d) => {
+    const rec = postsById.get(d.requestId);
+    if (!rec) return;
+    posts.set(d.redirectUrl, rec);
+    log(`POST redirected to ${noQuery(d.redirectUrl)}`);
+  },
+  WEB,
+);
+const noQuery = (u) => String(u || "").split(/[?#]/)[0];
+
+// The POST that started this download, as {body (base64), contentType,
+// filename}, "unsupported" when it can't be repeated, or null for a GET.
+function postFor(...urls) {
+  const rec = urls.map((u) => posts.get(u)).find(Boolean)
+    || [...posts.values()].find((r) => urls.some((u) => u && noQuery(u) === noQuery(r.url)));
+  if (!rec) return null;
+  let bytes = rec.raw;
+  if (!bytes && rec.form != null && !/multipart/i.test(rec.contentType)) bytes = new TextEncoder().encode(rec.form);
+  if (rec.tooBig || !bytes) return "unsupported";
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return { url: rec.url, body: btoa(bin), contentType: rec.contentType || "application/x-www-form-urlencoded", filename: rec.filename };
 }
 
 chrome.downloads.onCreated.addListener(async (item) => {
@@ -76,13 +178,26 @@ chrome.downloads.onCreated.addListener(async (item) => {
   // blob:, data: and file: URLs only exist inside the browser.
   if (!/^https?:/i.test(url)) return;
   if (Date.now() < bypassUntil) { bypassUntil = 0; await log(`#${item.id} Alt held: left to the browser`); return; }
-  if (await siteDisabled(item.referrer || url)) return;
+  if (await siteDisabled(item.referrer, url)) { await log(`#${item.id} site switched off: left to the browser`); return; }
   if (settings.minSizeKB > 0 && item.totalBytes > 0 && item.totalBytes < settings.minSizeKB * 1024) return;
+
+  // Started by a form POST? Hand over the request body too, unless that's
+  // switched off or the request can't be repeated.
+  const post = postFor(item.url, item.finalUrl);
+  if (post && (!settings.capturePost || post === "unsupported")) {
+    await log(`#${item.id} started by a POST: left to the browser${post === "unsupported" ? " (can't be repeated)" : ""}`);
+    return;
+  }
 
   // Pause first so the browser doesn't keep downloading while we ask the app.
   await chrome.downloads.pause(item.id).catch(() => {});
   try {
-    await sendToApp({ url, referrer: item.referrer, filename: item.filename });
+    await sendToApp({
+      url: post ? post.url : url,
+      referrer: item.referrer,
+      filename: post?.filename || item.filename,
+      post: post || undefined,
+    });
     await chrome.downloads.cancel(item.id).catch(() => {});
     await chrome.downloads.erase({ id: item.id }).catch(() => {});
     await log(`#${item.id} handed to SwiftDL`);
