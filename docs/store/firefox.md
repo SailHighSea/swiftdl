@@ -35,7 +35,7 @@ What the add-on does:
 
 - Sends downloads you start in Firefox to SwiftDL, with the site's cookies, so
   downloads behind a login keep working.
-- Adds a Download video button to video players. On YouTube and other video
+- Adds a Download video button to video players. On video
   sites, pick a quality in SwiftDL, from 4K to audio only.
 - Sends magnet links and .torrent files to SwiftDL's built-in torrent client.
 - Hold Alt while clicking a link to let Firefox download it instead, or turn

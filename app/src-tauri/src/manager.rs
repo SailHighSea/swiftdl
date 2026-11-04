@@ -56,7 +56,7 @@ pub struct Item {
     pub speed: f64,
     #[serde(default, skip_deserializing)]
     pub connections: usize,
-    /// yt-dlp format for downloads from video sites (YouTube and others),
+    /// yt-dlp format for downloads from video sites (and similar sites),
     /// which go through yt-dlp instead of the engine.
     #[serde(default)]
     pub format: Option<String>,

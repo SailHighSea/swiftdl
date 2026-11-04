@@ -209,7 +209,7 @@ async function toolsPanel(box, status) {
   });
 }
 
-// ---------- New download from a video site (YouTube and others) ----------
+// ---------- New download from a video site (and similar sites) ----------
 // These go through yt-dlp: the page is probed for its qualities, and the
 // chosen one becomes the download's format. "All formats" lets you pick the
 // video stream, audio stream and container yourself.

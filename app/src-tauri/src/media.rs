@@ -1,6 +1,6 @@
-//! Video sites (YouTube and others), through yt-dlp.
+//! Video sites, through yt-dlp.
 //!
-//! These sites don't serve a plain file. YouTube's player streams through a
+//! These sites don't serve a plain file. Their players stream through a
 //! private protocol with no download address, so SwiftDL hands these pages
 //! to yt-dlp, which keeps up with such changes, and to ffmpeg, which joins
 //! the separate video and audio streams. Both are fetched into the app's
@@ -76,7 +76,7 @@ fn ffmpeg_dir() -> Option<PathBuf> {
 
 const DENO_EXE: &str = if cfg!(windows) { "deno.exe" } else { "deno" };
 
-/// YouTube hides its stream addresses behind a script that yt-dlp needs a
+/// Some sites hide their stream addresses behind a script that yt-dlp needs a
 /// JavaScript runtime to solve; it looks for deno.
 fn deno_asset() -> &'static str {
     if cfg!(windows) {
@@ -168,7 +168,7 @@ async fn ensure_tools(client: &Client, note: &Note, need_ffmpeg: bool) -> Result
         let _ = std::fs::remove_file(&zip);
         unpacked.context("couldn't unpack ffmpeg")?;
     }
-    // Without deno YouTube may still work for some videos, so don't fail the
+    // Without deno some sites may still work, so don't fail the
     // download over it.
     let deno = tools_dir().join(DENO_EXE);
     if !deno.exists() {
@@ -256,7 +256,7 @@ fn stamp_update() {
     let _ = std::fs::write(stamp_path(), b"");
 }
 
-/// YouTube changes often and yt-dlp follows; check for a new yt-dlp once a day.
+/// Sites change often and yt-dlp follows; check for a new yt-dlp once a day.
 fn update_in_background(ytdlp: &Path) {
     let fresh = std::fs::metadata(stamp_path())
         .and_then(|m| m.modified())
@@ -485,7 +485,7 @@ fn qualities(info: &Value) -> Vec<Quality> {
             Quality {
                 label: if fps > 30.5 { format!("{h}p{}", fps.round()) } else { format!("{h}p") },
                 // H.264 + AAC first: it plays everywhere. AV1/VP9 only
-                // where YouTube has nothing else (1440p and 4K).
+                // where a site has nothing else (1440p and 4K).
                 format: format!(
                     "bv*[height={h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height={h}]+ba[ext=m4a]/bv*[height={h}]+ba/b[height={h}]/bv*[height<={h}]+ba/b"
                 ),
@@ -558,7 +558,7 @@ pub async fn run(client: &Client, job: Job, progress: Arc<Progress>, note: Note,
     tools.js_runtime(&mut cmd);
     if let Some((embed, langs)) = &subs {
         cmd.args(["--write-subs", "--sub-langs", langs]);
-        // "en-orig" is YouTube's own speech recognition, not a human track.
+        // "en-orig" is a site's own speech recognition, not a human track.
         if langs.contains("-orig") {
             cmd.arg("--write-auto-subs");
         }

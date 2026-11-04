@@ -14,8 +14,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to build, e.g. v0.2.0
-        required: true
+        description: Existing tag to rebuild, e.g. v0.2.0. Leave empty on the dev branch to make a new dev build.
+        required: false
 
 permissions:
   contents: write
@@ -27,6 +27,7 @@ jobs:
     outputs:
       id: ${{ steps.release.outputs.id }}
       tag: ${{ steps.tag.outputs.tag }}
+      dev: ${{ steps.tag.outputs.dev }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,7 +37,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ "$GITHUB_REF_TYPE" = branch ]; then
+          if [ "$GITHUB_REF_TYPE" = branch ] && [ -z "${{ inputs.tag }}" ]; then
+            echo "dev=true" >> "$GITHUB_OUTPUT"
+            echo "DEV=1" >> "$GITHUB_ENV"
             # A dev build: v<app version>-dev<n>, n one past the last such tag.
             ver=$(jq -r .version app/src-tauri/tauri.conf.json)
             n=$(gh release list --limit 200 --json tagName --jq "[.[] | select(.tagName | startswith(\"v$ver-dev\"))] | length")
@@ -63,7 +66,7 @@ jobs:
           - **Linux:** `SwiftDL_*_linux-x64-portable.tar.gz`, run `./SwiftDL` (needs WebKitGTK 4.1)
           - **Browser extension:** open SwiftDL, then Settings, Browser. `swiftdl-extension.zip` (Chromium browsers) and `swiftdl-firefox.xpi` (Firefox) have the same files.
           EOF
-          if [ "$GITHUB_REF_TYPE" != branch ]; then
+          if [ -z "$DEV" ]; then
             cat >> notes.md <<'EOF'
 
           ### Installers
@@ -81,7 +84,7 @@ jobs:
           # after creating one can miss the new draft.
           # Tags are drafts to review; dev builds go out as pre-releases,
           # tagged at the pushed commit.
-          if [ "$GITHUB_REF_TYPE" = branch ]; then
+          if [ -n "$DEV" ]; then
             # The notes are the commit message: summary, then description.
             git log -1 --format=%B "$GITHUB_SHA" | cat - notes.md > notes.dev && mv notes.dev notes.md
             id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -f name="SwiftDL $TAG" -F draft=false -F prerelease=true -F body=@notes.md --jq .id)
@@ -174,7 +177,7 @@ jobs:
       # Installers (.exe/.msi, .dmg, .AppImage/.deb/.rpm) only for tagged
       # releases; dev builds are the portable copies above.
       - name: Installers
-        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+        if: needs.create-release.outputs.dev != 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

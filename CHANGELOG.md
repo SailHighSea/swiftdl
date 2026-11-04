@@ -54,7 +54,7 @@ uses [Semantic Versioning](https://semver.org/).
 ## [0.2.1] - 2026-10-30
 
 ### Added
-- **YouTube and other video sites.** The video button, the popup and the New
+- **Video sites.** The video button, the popup and the New
   download window offer each quality, from 4K down to audio only. These sites
   go through yt-dlp, with ffmpeg joining video and audio; both are fetched on
   first use (ffmpeg comes from the system on macOS and Linux) and yt-dlp is
