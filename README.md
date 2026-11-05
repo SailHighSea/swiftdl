@@ -117,7 +117,7 @@ SwiftDL checks the file before downloading: its real name, size, type and whethe
 **Also included**
 
 - **Resume anything.** Pause, quit, lose your connection or crash: SwiftDL continues where it stopped.
-- **Torrents and magnet links.** Pick the files you want; SwiftDL opens magnet links and .torrent files from anywhere.
+- **Torrents and magnet links.** Pick the files you want in a folder tree, and set a priority for each (highest first, or Off to skip); SwiftDL opens magnet links and .torrent files from anywhere.
 - **Download video button.** A button appears over video players and lists the video and audio files the page loaded.
 - **Choose exactly what you get from video sites.** Pick video or audio only, the format (MP4, MKV, WebM), the codec (H.264, VP9, AV1 and more) and the quality, or pick any video and audio stream by hand. Add subtitles as a separate `.srt` file or embedded in the video.
 - **Portable.** Run it from a folder or a USB stick; nothing is written to your profile.
@@ -125,11 +125,36 @@ SwiftDL checks the file before downloading: its real name, size, type and whethe
 - **Tidy by default.** Files are sorted into Video, Music, Programs, Compressed and Documents folders.
 - **Command palette.** Press <kbd>Ctrl</kbd> <kbd>K</kbd> to find a download or run any action.
 - **Lives in the tray.** Close the window and downloads keep going.
-- **Light and dark.** Follows your system, or pick one in Settings.
+- **Themes.** Light and dark follow your system, or pick one in Settings. There are also classic themes (Flat 98, Win98, Mac System 7, Mac Platinum, Linux CDE and Linux GNOME 2) with the same layout.
 
 <div align="center">
 <img src="docs/assets/app-light.png" alt="SwiftDL in light mode" width="1000" />
 </div>
+
+### Torrents, file by file
+
+Open a magnet link or .torrent file and SwiftDL lists everything inside as a folder tree. Tick whole folders or single files, and give each a priority from Ultra High to Ultra Low, or Off to skip it. Higher-priority files download first; the rest start as soon as those finish.
+
+<p align="center"><img src="docs/assets/window-torrent.png" width="620" alt="Torrent window: a folder tree with sizes and a priority for each file" /></p>
+
+### Classic themes
+
+Prefer a different look? Settings has six classic themes next to Light and Dark. The layout stays the same; only the colours, borders, fonts and corners change.
+
+<table>
+<tr>
+<td align="center" width="50%"><img src="docs/assets/theme-win98.png" alt="Win98 theme" /><br><sub>Win98</sub></td>
+<td align="center" width="50%"><img src="docs/assets/theme-flat98.png" alt="Flat 98 theme" /><br><sub>Flat 98</sub></td>
+</tr>
+<tr>
+<td align="center"><img src="docs/assets/theme-platinum.png" alt="Mac Platinum theme" /><br><sub>Mac Platinum</sub></td>
+<td align="center"><img src="docs/assets/theme-system7.png" alt="Mac System 7 theme" /><br><sub>Mac System 7</sub></td>
+</tr>
+<tr>
+<td align="center"><img src="docs/assets/theme-gnome2.png" alt="Linux GNOME 2 theme" /><br><sub>Linux GNOME 2</sub></td>
+<td align="center"><img src="docs/assets/theme-cde.png" alt="Linux CDE theme" /><br><sub>Linux CDE</sub></td>
+</tr>
+</table>
 
 ## How it works
 

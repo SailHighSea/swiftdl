@@ -16,6 +16,10 @@ uses [Semantic Versioning](https://semver.org/).
   checks, an option to include dev builds, and a link to the GitHub repository.
   A new version shows as a notification that opens its release page.
 - Dev builds now come with installers for Windows, macOS and Linux too.
+- The torrent file picker is wider and shows the files as a folder tree (expand or collapse folders, tick a whole folder at once) with Size and Priority columns.
+- Per-file priority in the torrent picker (Ultra High to Ultra Low, or Off to skip): higher priorities download first, lower ones start when those finish.
+- Six classic themes in Settings: Flat 98, Win98, Mac System 7, Mac Platinum, Linux CDE and Linux GNOME 2. Same layout, different look.
+- A stable version can be released without merging: run the Release workflow on `dev` with "Stable" ticked (merging to `main` also releases it).
 
 ### Fixed
 - The video button now finds videos inside shadow DOM, so it appears on more

@@ -68,6 +68,10 @@ pub struct Item {
     /// presence marks the download as a torrent.
     #[serde(default)]
     pub torrent_files: Option<Vec<usize>>,
+    /// Priority of each file, by index (higher downloads first; empty = all
+    /// equal). Files in a lower group start when the higher ones finish.
+    #[serde(default)]
+    pub torrent_prio: Vec<i8>,
     /// Live status text, such as "Merging video and audio".
     #[serde(default, skip_deserializing)]
     pub note: Option<String>,
@@ -166,6 +170,9 @@ pub struct AddRequest {
     /// A torrent: the files to download (see `Item::torrent_files`).
     #[serde(default)]
     pub torrent_files: Option<Vec<usize>>,
+    /// See `Item::torrent_prio`.
+    #[serde(default)]
+    pub torrent_prio: Vec<i8>,
 }
 
 struct Running {
@@ -290,6 +297,7 @@ impl DownloadManager {
                 format: req.format,
                 subtitles: req.subtitles,
                 torrent_files: req.torrent_files,
+                torrent_prio: req.torrent_prio,
                 note: None,
             });
             if let Some(label) = req.window {
@@ -396,7 +404,7 @@ impl DownloadManager {
             };
             let filename = inc.suggested_name().or(probed).unwrap_or_else(|| "download.bin".into());
             let dir = this.default_dir(category_for(&filename));
-            this.add(AddRequest { url: inc.url, filename, dir, headers, start: true, window: None, format: None, subtitles: None, size: None, torrent_files: None });
+            this.add(AddRequest { url: inc.url, filename, dir, headers, start: true, window: None, format: None, subtitles: None, size: None, torrent_files: None, torrent_prio: vec![] });
         });
     }
 
@@ -496,7 +504,7 @@ impl DownloadManager {
                         },
                     );
                     let kind = match (&item.torrent_files, &item.format) {
-                        (Some(files), _) => Kind::Torrent(files.clone()),
+                        (Some(files), _) => Kind::Torrent(files.clone(), item.torrent_prio.clone()),
                         (None, Some(format)) => Kind::Media(format.clone(), item.subtitles.clone()),
                         (None, None) => Kind::File,
                     };
@@ -517,11 +525,11 @@ impl DownloadManager {
                         let job = crate::media::Job { url: req.url.clone(), format, subs, dest: req.dest.clone(), cookies };
                         crate::media::run(&this.client, job, progress, note, cancel).await
                     }
-                    Kind::Torrent(files) => {
+                    Kind::Torrent(files, prio) => {
                         // A torrent saves into a folder; `dest` is its name inside it.
                         let dir = req.dest.parent().map(Path::to_path_buf).unwrap_or_default();
                         let seed = crate::torrent::Seed::from_setting(&this.settings().seed_until);
-                        let job = crate::torrent::Job { url: req.url.clone(), headers: req.headers.clone(), dir, files, seed };
+                        let job = crate::torrent::Job { url: req.url.clone(), headers: req.headers.clone(), dir, files, prio, seed };
                         crate::torrent::run(&this.client, job, progress, note, cancel).await
                     }
                     Kind::File => swiftdl_engine::run(&this.client, &req, progress, cancel, this.limiter.clone()).await,
@@ -664,7 +672,7 @@ enum Kind {
     /// A video site, through yt-dlp, with this format.
     Media(String, Option<String>),
     /// A torrent or magnet link, with these files (empty = all).
-    Torrent(Vec<usize>),
+    Torrent(Vec<usize>, Vec<i8>),
 }
 
 pub fn to_header_map(headers: &[(String, String)]) -> HeaderMap {

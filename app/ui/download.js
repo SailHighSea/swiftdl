@@ -20,6 +20,7 @@ const P = {
   download: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 20h14"/>',
   chevDown: '<path d="m6 9.5 6 6 6-6"/>',
   chevUp: '<path d="m6 14.5 6-6 6 6"/>',
+  chevRight: '<path d="m9.5 6 6 6-6 6"/>',
   video: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7.5 4.5v15M16.5 4.5v15M3.5 9.5h4M3.5 14.5h4M16.5 9.5h4M16.5 14.5h4"/>',
   music: '<path d="M9 17.5V6.3l10-1.8v11"/><circle cx="6.5" cy="17.5" r="2.5"/><circle cx="16.5" cy="15.5" r="2.5"/>',
   app: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 9h17"/><path d="M6.6 6.8h.01M9 6.8h.01" stroke-width="2.2"/>',
@@ -73,11 +74,12 @@ const $ = (id) => document.getElementById(id);
 const view = $("view");
 
 // The window grows and shrinks to fit what it shows.
+let winW = 552; // the torrent file picker is wider
 const fit = () => {
   if (!win || !LogicalSize) return;
   // The card plus the 16px transparent margin on each side (for its shadow).
   const h = Math.ceil($("root").getBoundingClientRect().height) + 32;
-  win.setSize(new LogicalSize(552, Math.min(780, h)));
+  win.setSize(new LogicalSize(winW, Math.min(780, h)));
 };
 new ResizeObserver(fit).observe($("root"));
 const setTitle = (t) => { $("w-title").textContent = t; document.title = t; win?.setTitle(t); };
@@ -497,6 +499,9 @@ async function mediaView(token, inc, settings, headers) {
 async function torrentView(token, inc, settings, headers) {
   let dir = settings.downloadDir, info = null;
   const magnet = inc.url.startsWith("magnet:");
+  winW = 760;
+  fit();
+  win?.center?.();
   view.innerHTML = `
     <div class="d-head">${glyph("Torrents")}<div class="d-name"><input id="c-name" spellcheck="false" placeholder="${magnet ? "Asking peers for the details…" : "Reading the torrent…"}" readonly><div class="d-sub"><span class="st">${magnet ? "Magnet link" : "Torrent"}</span></div></div></div>
     <div class="t-files" id="t-files"><div class="t-wait"><span class="spinner"></span><span class="muted">${magnet ? "Finding peers who share it. This can take a few seconds." : "Reading the file list…"}</span></div></div>
@@ -512,24 +517,102 @@ async function torrentView(token, inc, settings, headers) {
     </div>`;
   const setDir = (d) => { dir = d; $("c-dir").textContent = d; $("c-dir").title = d; };
   setDir(dir);
-  const chosen = () => [...view.querySelectorAll(".t-file input[data-i]:checked")].map((c) => Number(c.dataset.i));
-  const update = () => {
-    const sel = chosen(), size = sel.reduce((a, i) => a + info.files[i].size, 0);
-    $("t-sel").textContent = `${sel.length} of ${info.files.length} file${info.files.length === 1 ? "" : "s"} · ${bytes(size)}`;
+  // The files as a folder tree: ticking a folder ticks everything in it.
+  let on = [], prio = [], folders = [], root = null;
+  // Priority levels, like a torrent client's menu. "Off" skips the file;
+  // the rest download highest first (a lower level starts when the higher ones are done).
+  const LEVELS = [["Ultra High", 4], ["Very High", 3], ["High", 2], ["Above Normal", 1], ["Normal", 0], ["Below Normal", -1], ["Low", -2], ["Very Low", -3], ["Ultra Low", -4], ["Off", null]];
+  const levelName = (v) => LEVELS.find((l) => l[1] === v)?.[0] ?? "Normal";
+  const prioOf = (idx) => {
+    const set = new Set(idx.map((i) => (on[i] ? prio[i] : null)));
+    return set.size === 1 ? levelName([...set][0]) : "Mixed";
+  };
+  const chosen = () => on.flatMap((v, i) => (v ? [i] : []));
+  const build = () => {
+    const mk = (name, depth) => ({ id: folders.length, name, depth, dirs: new Map(), files: [], all: [], open: depth === 0 });
+    root = { dirs: new Map(), files: [], all: [], depth: -1 };
+    info.files.forEach((f, i) => {
+      const parts = f.path.split(/[\\/]/).filter(Boolean);
+      let n = root;
+      n.all.push(i);
+      for (const part of parts.slice(0, -1)) {
+        if (!n.dirs.has(part)) { const d = mk(part, n.depth + 1); folders.push(d); n.dirs.set(part, d); }
+        n = n.dirs.get(part);
+        n.all.push(i);
+      }
+      n.files.push([i, parts[parts.length - 1] || f.path]);
+    });
+  };
+  const sizeOf = (idx) => idx.reduce((a, i) => a + info.files[i].size, 0);
+  const draw = () => {
+    const box = $("t-files"), top = box.scrollTop;
+    const rows = [];
+    const row = (depth, chev, box, ic, label, title, size, pidx) =>
+      `<div class="t-row"><div class="t-n" style="padding-left:${depth * 20}px"><span class="t-chev"${chev ? ` data-f="${chev.id}"` : ""}>${chev ? icon(chev.open ? "chevDown" : "chevRight") : ""}</span>${box}<span class="t-ic">${icon(ic)}</span><span class="t-nm"${chev ? ` data-f="${chev.id}"` : ""} title="${esc(title)}">${esc(label)}</span></div><span class="t-sz">${bytes(size)}</span><button class="t-pr" data-p="${chev ? "f" + chev.id : "i" + pidx}" title="Change priority">${prioOf(chev ? chev.all : [pidx])}</button></div>`;
+    const walk = (n) => {
+      for (const d of n.dirs.values()) {
+        rows.push(row(d.depth, d, `<input type="checkbox" data-f="${d.id}" aria-label="${esc(d.name)}">`, "folder", d.name, d.name, sizeOf(d.all)));
+        if (d.open) walk(d);
+      }
+      for (const [i, name] of n.files) {
+        rows.push(row(n.depth + 1, null, `<input type="checkbox" data-i="${i}"${on[i] ? " checked" : ""} aria-label="${esc(name)}">`, "file", name, info.files[i].path, info.files[i].size, i));
+      }
+    };
+    walk(root);
+    box.innerHTML = `<div class="t-row t-head"><div class="t-n"><input type="checkbox" id="t-all" aria-label="Select all files"><span>Name</span></div><span class="t-sz">Size</span><span class="t-pr">Priority</span></div>` + rows.join("");
+    const state = (idx, el) => { const c = idx.filter((i) => on[i]).length; el.checked = c === idx.length; el.indeterminate = c > 0 && c < idx.length; };
+    box.querySelectorAll("input[data-f]").forEach((el) => state(folders[el.dataset.f].all, el));
+    state(root.all, $("t-all"));
+    box.scrollTop = top;
+    const sel = chosen();
+    $("t-sel").textContent = `${sel.length} of ${info.files.length} file${info.files.length === 1 ? "" : "s"} · ${bytes(sizeOf(sel))}`;
     $("c-start").disabled = $("c-later").disabled = sel.length === 0;
-    const all = $("t-all"); if (all) all.checked = sel.length === info.files.length;
+  };
+  const openPrio = (btn) => {
+    document.getElementById("t-menu")?.remove();
+    const key = btn.dataset.p, idx = key[0] === "f" ? folders[key.slice(1)].all : [Number(key.slice(1))];
+    const cur = prioOf(idx);
+    const m = document.createElement("div");
+    m.id = "t-menu";
+    m.innerHTML = LEVELS.map(([n]) => `<button data-l="${n}"><span class="rd${n === cur ? " on" : ""}"></span>${n}</button>`).join("");
+    document.body.appendChild(m);
+    const r = btn.getBoundingClientRect();
+    m.style.left = `${Math.max(8, Math.min(r.right - m.offsetWidth, innerWidth - m.offsetWidth - 8))}px`;
+    m.style.top = `${Math.max(8, Math.min(r.bottom + 2, innerHeight - m.offsetHeight - 8))}px`;
+    const close = () => { m.remove(); document.removeEventListener("mousedown", away, true); document.removeEventListener("keydown", esc, true); };
+    const away = (e) => { if (!m.contains(e.target)) close(); };
+    const esc = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+    document.addEventListener("mousedown", away, true);
+    document.addEventListener("keydown", esc, true);
+    m.onclick = (e) => {
+      const b = e.target.closest("button[data-l]");
+      if (!b) return;
+      const v = LEVELS.find((l) => l[0] === b.dataset.l)[1];
+      idx.forEach((i) => { if (v === null) on[i] = false; else { on[i] = true; prio[i] = v; } });
+      close();
+      draw();
+    };
   };
   try {
     info = await invoke("probe_torrent", { url: inc.url, headers });
     $("c-name").value = info.name;
-    const many = info.files.length > 1;
-    $("t-files").innerHTML = (many ? `<label class="t-file t-allrow"><input type="checkbox" id="t-all" checked><span>All files</span><span class="muted">${bytes(info.size)}</span></label>` : "") +
-      info.files.map((f, i) => `<label class="t-file"><input type="checkbox" data-i="${i}" checked><span title="${esc(f.path)}">${esc(f.path)}</span><span class="muted">${bytes(f.size)}</span></label>`).join("");
+    on = info.files.map(() => true);
+    prio = info.files.map(() => 0);
+    build();
     $("t-files").addEventListener("change", (e) => {
-      if (e.target.id === "t-all") view.querySelectorAll(".t-file input[data-i]").forEach((c) => (c.checked = e.target.checked));
-      update();
+      const t = e.target;
+      if (t.id === "t-all") on.fill(t.checked);
+      else if (t.dataset.f != null) folders[t.dataset.f].all.forEach((i) => (on[i] = t.checked));
+      else if (t.dataset.i != null) on[t.dataset.i] = t.checked;
+      draw();
     });
-    update();
+    $("t-files").addEventListener("click", (e) => {
+      const pb = e.target.closest("button[data-p]");
+      if (pb) { openPrio(pb); return; }
+      const f = e.target.closest("[data-f]:not(input)");
+      if (f) { folders[f.dataset.f].open = !folders[f.dataset.f].open; draw(); }
+    });
+    draw();
     $("c-start").focus();
   } catch (e) {
     $("t-files").innerHTML = `<div class="t-wait"><span class="err">${esc(String(e))}</span></div>`;
@@ -540,9 +623,10 @@ async function torrentView(token, inc, settings, headers) {
     if (!info) return;
     const sel = chosen();
     if (!sel.length) return;
-    const files = sel.length === info.files.length ? [] : sel;
+    const ordered = sel.some((i) => prio[i] !== 0);
+    const files = sel.length === info.files.length && !ordered ? [] : sel;
     const size = sel.reduce((a, i) => a + info.files[i].size, 0);
-    const id = await addDownload({ url: inc.url, filename: info.name, dir, headers, start, window: win?.label, size, torrentFiles: files });
+    const id = await addDownload({ url: inc.url, filename: info.name, dir, headers, start, window: win?.label, size, torrentFiles: files, torrentPrio: ordered ? prio : [] });
     if (id == null) return;
     invoke("forget_confirm", { token });
     if (!start) { $("w-close").click(); return; }
