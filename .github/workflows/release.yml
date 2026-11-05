@@ -2,6 +2,11 @@
 # them, plus the browser extension, to a draft GitHub release whose notes
 # come from CHANGELOG.md. Review the draft on GitHub, then publish it.
 # To rebuild an existing tag, run this workflow by hand and give the tag.
+# A stable release needs no merge: run this workflow by hand on dev with
+# "Stable" ticked, or merge to main. Either releases the version in
+# tauri.conf.json as a draft, tagged v<version> at that commit; if that version
+# already has a release the run does nothing, so merges that don't bump the
+# version are harmless.
 # Every push to dev builds portable copies and installers into a public pre-release named
 # like "SwiftDL v0.3.1-dev1" (the number counts up per version); tagged
 # releases are drafts to review.
@@ -10,12 +15,16 @@ name: Release
 on:
   push:
     tags: ["v*"]
-    branches: [dev]
+    branches: [dev, main]
   workflow_dispatch:
     inputs:
       tag:
         description: Existing tag to rebuild, e.g. v0.2.0. Leave empty on the dev branch to make a new dev build.
         required: false
+      stable:
+        description: Stable release of the app version, from the branch you run this on (no merge needed). A version that already has a release is left alone.
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -28,6 +37,7 @@ jobs:
       id: ${{ steps.release.outputs.id }}
       tag: ${{ steps.tag.outputs.tag }}
       dev: ${{ steps.tag.outputs.dev }}
+      skip: ${{ steps.tag.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,7 +47,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ "$GITHUB_REF_TYPE" = branch ] && [ -z "${{ inputs.tag }}" ]; then
+          if [ "$GITHUB_REF_TYPE" = branch ] && [ -z "${{ inputs.tag }}" ] && { [ "$GITHUB_REF_NAME" = main ] || [ "${{ inputs.stable }}" = true ]; }; then
+            # A merge to main, or a hand-run "Stable": the stable release of the app version.
+            tag="v$(jq -r .version app/src-tauri/tauri.conf.json)"
+            echo "STABLE=1" >> "$GITHUB_ENV"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "::notice::$tag already has a release; nothing to do. Bump the version to release again."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            fi
+          elif [ "$GITHUB_REF_TYPE" = branch ] && [ -z "${{ inputs.tag }}" ]; then
             echo "dev=true" >> "$GITHUB_OUTPUT"
             echo "DEV=1" >> "$GITHUB_ENV"
             # A dev build: v<app version>-dev<n>, n one past the last such tag.
@@ -50,6 +68,7 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "TAG=$tag" >> "$GITHUB_ENV"
       - name: Release notes from CHANGELOG.md
+        if: steps.tag.outputs.skip != 'true'
         run: |
           version="${TAG#v}"
           awk -v head="## [$version]" '
@@ -75,6 +94,7 @@ jobs:
           EOF
       - name: Create release
         id: release
+        if: steps.tag.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -87,6 +107,11 @@ jobs:
             git log -1 --format=%B "$GITHUB_SHA" | cat - notes.md > notes.dev && mv notes.dev notes.md
             create() { gh api -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -f name="SwiftDL $TAG" -F draft=false -F prerelease=true -F body=@notes.md --jq .id; }
           else
+            # A merge to main has no tag yet: make it at the merged commit
+            # (a tag made with the workflow token doesn't start another run).
+            if [ -n "$STABLE" ]; then
+              gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" >/dev/null
+            fi
             create() { gh api -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f name="SwiftDL $TAG" -F draft=true -F body=@notes.md --jq .id; }
           fi
           # GitHub's API sometimes answers 502/503 for a moment: try again.
@@ -101,6 +126,7 @@ jobs:
 
   app:
     needs: create-release
+    if: needs.create-release.outputs.skip != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -195,6 +221,7 @@ jobs:
 
   extension:
     needs: create-release
+    if: needs.create-release.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -1,0 +1,190 @@
+/* Classic themes: Flat 98, Win98, Mac System 7, Mac Platinum, Linux CDE and
+   Linux GNOME 2. Same layout as the normal themes; only colours, borders,
+   fonts and corners change. theme.js sets data-theme to the theme's name and
+   data-retro on <html>. Each theme below only sets variables; the shared
+   rules after them use those. */
+
+:root[data-theme="flat98"] {
+  --bg: #c0c0c0; --panel: #ffffff; --elev: #c0c0c0; --menu: #c0c0c0; --group: #c0c0c0;
+  --text: #000; --text-2: #000; --muted: #404040; --faint: #808080;
+  --border: #808080; --border-2: #808080; --hover: rgba(0, 0, 128, .08); --active: #000080;
+  --accent: #000080; --accent-2: #000080; --accent-soft: rgba(0, 0, 128, .14);
+  --primary-bg: #000080; --primary-text: #fff; --btn-bg: #c0c0c0; --btn-hover: #d4d4d4;
+  --track: #fff; --kbd-bg: #dfdfdf; --green: #006400; --amber: #806000; --red: #b00000;
+  --sel-bg: #000080; --sel-fg: #fff; --rd: 0px; --fs: 11px; --fill-gap: #fff; --seg: none;
+  --raised: inset 0 0 0 1px #808080; --sunken: inset 0 0 0 1px #808080; --groove: inset 0 0 0 1px #808080;
+  --frame: 0 0 0 1px #000; --scroll: #dfdfdf;
+  --title-bg: #000080; --title-fg: #fff;
+  --font: Tahoma, "MS Sans Serif", Arial, sans-serif; --font-display: Tahoma, "MS Sans Serif", Arial, sans-serif;
+}
+:root[data-theme="win98"] {
+  --bg: #c0c0c0; --panel: #ffffff; --elev: #c0c0c0; --menu: #c0c0c0; --group: #c0c0c0;
+  --text: #000; --text-2: #000; --muted: #404040; --faint: #808080;
+  --border: #808080; --border-2: #808080; --hover: rgba(0, 0, 128, .08); --active: #000080;
+  --accent: #000080; --accent-2: #000080; --accent-soft: rgba(0, 0, 128, .14);
+  --primary-bg: #c0c0c0; --primary-text: #000; --btn-bg: #c0c0c0; --btn-hover: #c0c0c0;
+  --track: #fff; --kbd-bg: #dfdfdf; --green: #006400; --amber: #806000; --red: #b00000;
+  --sel-bg: #000080; --sel-fg: #fff; --rd: 0px; --fs: 11px; --seg: repeating-linear-gradient(90deg, transparent 0 8px, #fff 8px 10px);
+  --raised: inset -1px -1px #000, inset 1px 1px #fff, inset -2px -2px #808080, inset 2px 2px #dfdfdf;
+  --sunken: inset -1px -1px #fff, inset 1px 1px #808080, inset -2px -2px #dfdfdf, inset 2px 2px #000;
+  --groove: inset -1px -1px #fff, inset 1px 1px #808080, 1px 1px #fff, -1px -1px #808080;
+  --frame: inset -1px -1px #000, inset 1px 1px #dfdfdf, inset -2px -2px #808080, inset 2px 2px #fff, 0 0 0 1px #000;
+  --scroll: #e0e0e0; --title-bg: linear-gradient(90deg, #000080, #1084d0); --title-fg: #fff;
+  --font: Tahoma, "MS Sans Serif", Arial, sans-serif; --font-display: Tahoma, "MS Sans Serif", Arial, sans-serif;
+}
+:root[data-theme="system7"] {
+  --bg: #ffffff; --panel: #ffffff; --elev: #ffffff; --menu: #ffffff; --group: #dddddd;
+  --text: #000; --text-2: #000; --muted: #333; --faint: #777;
+  --border: #000; --border-2: #000; --hover: #eee; --active: #000;
+  --accent: #000; --accent-2: #000; --accent-soft: #ddd;
+  --primary-bg: #fff; --primary-text: #000; --btn-bg: #fff; --btn-hover: #eee;
+  --track: repeating-linear-gradient(45deg, #000 0 1px, #fff 1px 3px); --kbd-bg: #eee;
+  --green: #000; --amber: #000; --red: #000;
+  --sel-bg: #000; --sel-fg: #fff; --rd: 0px; --fs: 12px; --seg: none;
+  --raised: inset 0 0 0 1px #000, 1px 1px 0 #000; --sunken: inset 0 0 0 1px #000; --groove: inset 0 0 0 1px #000;
+  --frame: 0 0 0 1px #000, 2px 2px 0 #000; --scroll: repeating-linear-gradient(45deg, #000 0 1px, #fff 1px 3px);
+  --title-bg: repeating-linear-gradient(0deg, #000 0 1px, #fff 1px 3px); --title-fg: #000;
+  --font: Geneva, Chicago, "Lucida Grande", Verdana, sans-serif; --font-display: Geneva, Chicago, "Lucida Grande", Verdana, sans-serif;
+}
+:root[data-theme="platinum"] {
+  --bg: #dddddd; --panel: #ffffff; --elev: #dddddd; --menu: #dddddd; --group: #cfcfcf;
+  --text: #000; --text-2: #111; --muted: #444; --faint: #888;
+  --border: #888; --border-2: #777; --hover: rgba(80, 90, 160, .1); --active: #6b79b8;
+  --accent: #5a69ad; --accent-2: #5a69ad; --accent-soft: rgba(90, 105, 173, .18);
+  --primary-bg: linear-gradient(#f4f4f4, #c4c4c4); --primary-text: #000;
+  --btn-bg: linear-gradient(#f8f8f8, #cdcdcd); --btn-hover: linear-gradient(#fff, #d8d8d8);
+  --track: #fff; --kbd-bg: #eee; --green: #2c7a3f; --amber: #9a6b00; --red: #b3261e;
+  --sel-bg: #6b79b8; --sel-fg: #fff; --rd: 3px; --fs: 11.5px; --seg: none;
+  --raised: inset 1px 1px 0 #fff, inset -1px -1px 0 #8a8a8a, 0 0 0 1px #333;
+  --sunken: inset 1px 1px 0 #7a7a7a, inset -1px -1px 0 #fff, 0 0 0 1px #777;
+  --groove: inset 0 0 0 1px #999, inset 1px 1px 0 #fff;
+  --frame: inset 1px 1px 0 #fff, 0 0 0 1px #222, 2px 2px 0 rgba(0, 0, 0, .35); --scroll: #ebebeb;
+  --title-bg: repeating-linear-gradient(0deg, #bbb 0 1px, #eee 1px 3px); --title-fg: #000;
+  --font: "Lucida Grande", Charcoal, Geneva, Verdana, sans-serif; --font-display: "Lucida Grande", Charcoal, Geneva, Verdana, sans-serif;
+}
+:root[data-theme="cde"] {
+  --bg: #aeb2c3; --panel: #d6d7e3; --elev: #aeb2c3; --menu: #aeb2c3; --group: #aeb2c3;
+  --text: #000; --text-2: #000; --muted: #25283a; --faint: #5d6179;
+  --border: #5d6179; --border-2: #3a3d4f; --hover: rgba(255, 255, 255, .2); --active: #6b77a8;
+  --accent: #5360a0; --accent-2: #5360a0; --accent-soft: rgba(83, 96, 160, .2);
+  --primary-bg: #aeb2c3; --primary-text: #000; --btn-bg: #aeb2c3; --btn-hover: #bcc0cf;
+  --track: #c8c9d6; --kbd-bg: #c8c9d6; --green: #1f6f3a; --amber: #8a5a00; --red: #a01818;
+  --sel-bg: #6b77a8; --sel-fg: #fff; --rd: 0px; --fs: 12px; --seg: none;
+  --raised: inset 1px 1px 0 #e7e7f3, inset -1px -1px 0 #5a5e75, 0 0 0 1px #3a3d4f;
+  --sunken: inset 1px 1px 0 #5a5e75, inset -1px -1px 0 #e7e7f3, 0 0 0 1px #3a3d4f;
+  --groove: inset 1px 1px 0 #5a5e75, inset -1px -1px 0 #e7e7f3;
+  --frame: inset 1px 1px 0 #e7e7f3, inset -1px -1px 0 #5a5e75, 0 0 0 1px #20222e; --scroll: #c8c9d6;
+  --title-bg: #8a93bb; --title-fg: #000;
+  --font: "Lucida Sans", "Luxi Sans", "DejaVu Sans", Helvetica, sans-serif; --font-display: "Lucida Sans", "Luxi Sans", "DejaVu Sans", Helvetica, sans-serif;
+}
+:root[data-theme="gnome2"] {
+  --bg: #ededeb; --panel: #ffffff; --elev: #ededeb; --menu: #ededeb; --group: #e4e2de;
+  --text: #2e3436; --text-2: #2e3436; --muted: #555753; --faint: #888a85;
+  --border: #bab5ab; --border-2: #a39e93; --hover: rgba(74, 144, 217, .1); --active: #4a90d9;
+  --accent: #4a90d9; --accent-2: #4a90d9; --accent-soft: rgba(74, 144, 217, .18);
+  --primary-bg: linear-gradient(#f9f9f8, #dad8d2); --primary-text: #2e3436;
+  --btn-bg: linear-gradient(#f9f9f8, #dad8d2); --btn-hover: linear-gradient(#fff, #e6e4de);
+  --track: #dcdad5; --kbd-bg: #e4e2de; --green: #3d8b1f; --amber: #b27500; --red: #cc0000;
+  --sel-bg: #4a90d9; --sel-fg: #fff; --rd: 3px; --fs: 12px; --seg: none;
+  --raised: inset 0 0 0 1px #fff, 0 0 0 1px #8b8680; --sunken: inset 0 1px 2px rgba(0, 0, 0, .25), 0 0 0 1px #8b8680;
+  --groove: 0 0 0 1px #bab5ab; --frame: 0 0 0 1px #6e6a62, 0 4px 14px rgba(0, 0, 0, .3); --scroll: #dcdad5;
+  --title-bg: linear-gradient(#6aa3dd, #3f7fc4); --title-fg: #fff;
+  --font: "DejaVu Sans", "Bitstream Vera Sans", Cantarell, Ubuntu, "Segoe UI", sans-serif; --font-display: "DejaVu Sans", "Bitstream Vera Sans", Cantarell, Ubuntu, "Segoe UI", sans-serif;
+}
+
+/* ---- shared by every classic theme ---- */
+:root[data-retro] { color-scheme: light; }
+:root[data-retro] * { transition: none !important; animation: none !important; backdrop-filter: none !important; }
+:root[data-retro] body { font-size: var(--fs); letter-spacing: 0; font-weight: 400; -webkit-font-smoothing: auto; }
+:root[data-retro] :is(.main, .modal, .btn, .sq-btn, .ghost-btn, .search-btn, .net, .limit, .set-group, .seg, .seg button, .stepper, .stepper button,
+  .cat, .chip, .crumb, .menu, .menu button, .toast, .drop-card, .nav-item, .set-nav button, .pal-item, .ftile, .empty-icon, .big-stats,
+  .ext-status, .comp-file, .custom input, .guide-note, #root, .mini, .mini i, .ins-bar, .ins-bar i, .cmap, .p-bar, .p-bar i, .lanes .slot, .lanes-empty,
+  .win-ctrls button, .w-btn, .switch i, .switch i::after, kbd, code, .step, .t-files, #t-menu, #t-menu button, button.t-pr) { border-radius: var(--rd) !important; }
+
+:root[data-retro] .app { background: var(--bg); }
+:root[data-retro] .main { margin: 4px 4px 4px 0; background: var(--bg); box-shadow: var(--sunken); }
+:root[data-retro] .header { background: var(--bg); border-bottom: 1px solid var(--border); }
+:root[data-retro] .list { background: var(--panel); margin: 2px; box-shadow: var(--sunken); }
+:root[data-retro] .inspector { background: var(--bg); border-left: 1px solid var(--border); }
+:root[data-retro] .ghead { background: var(--group); backdrop-filter: none; }
+:root[data-retro] .onboard { background: var(--group); }
+:root[data-retro] .row { border-bottom: 1px solid color-mix(in srgb, var(--border) 25%, transparent); }
+:root[data-retro] .row:hover { background: var(--hover); }
+:root[data-retro] :is(.row.sel, .row.sel.multi, .nav-item.on, .set-nav button.on, .pal-item.on, .menu button:hover:not(:disabled)) { background: var(--sel-bg); color: var(--sel-fg); }
+:root[data-retro] :is(.row.sel, .nav-item.on, .set-nav button.on, .pal-item.on, .menu button:hover:not(:disabled)) :is(*, svg) { color: var(--sel-fg) !important; }
+:root[data-retro] .nav-item { height: 24px; border-radius: 0; }
+:root[data-retro] .nav-item:hover:not(.on) { background: var(--hover); }
+
+/* buttons */
+:root[data-retro] :is(.btn, .ghost-btn, .sq-btn.bordered, .win-ctrls button, .w-btn, .limit, .seg button, .stepper button) { background: var(--btn-bg); color: var(--text); box-shadow: var(--raised); }
+:root[data-retro] :is(.btn, .ghost-btn, .sq-btn.bordered, .win-ctrls button, .w-btn, .limit, .seg button):hover:not(:disabled) { background: var(--btn-hover); color: var(--text); }
+:root[data-retro] :is(.btn, .ghost-btn, .sq-btn.bordered, .win-ctrls button, .w-btn, .seg button):active:not(:disabled) { box-shadow: var(--sunken); opacity: 1; }
+:root[data-retro] .btn.primary { background: var(--primary-bg); color: var(--primary-text); font-weight: 700; }
+:root[data-retro] .btn.danger { background: var(--red); color: #fff; }
+:root[data-retro] :is(.btn, .ghost-btn, .search-btn) { height: 24px; }
+:root[data-retro] .btn.sm { height: 22px; }
+:root[data-retro] .btn.icon { width: 24px; }
+:root[data-retro] .sq-btn { width: 24px; height: 24px; }
+:root[data-retro] .sq-btn:not(.bordered):hover { background: var(--hover); }
+:root[data-retro] .search-btn { background: var(--panel); box-shadow: var(--sunken); }
+:root[data-retro] .win-ctrls { border-left: 1px solid var(--border); }
+:root[data-retro] .win-ctrls button { width: 22px; height: 20px; }
+:root[data-retro] .win-ctrls button.close:hover { background: var(--btn-hover); color: var(--text); }
+:root[data-retro] .seg { background: none; padding: 0; gap: 4px; }
+:root[data-retro] .seg button { height: 24px; font-weight: 400; }
+:root[data-retro] .seg button.on { box-shadow: var(--sunken); background: var(--panel); color: var(--text); font-weight: 700; }
+:root[data-retro] .theme-seg { display: grid; grid-template-columns: repeat(3, 1fr); }
+
+/* inputs, groups, bars */
+:root[data-retro] :is(.stepper, .custom input, .comp-url) { background: var(--panel); box-shadow: var(--sunken); }
+:root[data-retro] .comp-url { margin: 6px 20px 0; padding: 5px 8px; font-size: 14px; }
+:root[data-retro] .stepper button { box-shadow: none; background: none; }
+:root[data-retro] .net { background: var(--panel); box-shadow: var(--sunken); }
+:root[data-retro] .set-group { box-shadow: var(--groove); }
+:root[data-retro] .set-row + .set-row { border-top: 1px solid color-mix(in srgb, var(--border) 40%, transparent); }
+:root[data-retro] .set-nav { background: var(--bg); border-right: 1px solid var(--border); }
+:root[data-retro] :is(.ext-status, .comp-file, .big-stats, .guide-note) { box-shadow: var(--groove); background: none; }
+:root[data-retro] :is(.cat, .chip, .crumb, .r-ext) { background: var(--panel); box-shadow: inset 0 0 0 1px var(--border); }
+:root[data-retro] :is(.mini, .ins-bar, .cmap, .p-bar, .lanes .slot, .lanes-empty, #set-tools-bar .p-bar) { background: var(--track); box-shadow: var(--sunken); }
+:root[data-retro] :is(.mini, .p-bar) { height: 12px; }
+:root[data-retro] .ins-bar { height: 12px; }
+:root[data-retro] :is(.mini i, .ins-bar i, .p-bar i, .lanes .slot i, .lanes-empty i, .cmap .fill) { background-image: var(--seg); }
+:root[data-retro] .switch { width: 30px; height: 16px; }
+:root[data-retro] .switch i { background: var(--panel); box-shadow: var(--sunken); }
+:root[data-retro] .switch i::after { top: 2px; left: 2px; width: 12px; height: 12px; background: var(--btn-bg); box-shadow: var(--raised); }
+:root[data-retro] .switch input:checked + i { background: var(--accent); }
+:root[data-retro] .switch input:checked + i::after { transform: translateX(14px); }
+:root[data-retro] .check input, :root[data-retro] input[type="checkbox"] { accent-color: var(--accent); }
+
+/* windows, menus */
+:root[data-retro] .modal { background: var(--bg); box-shadow: var(--frame); border: 0; }
+:root[data-retro] .modal::backdrop { background: rgba(0, 0, 0, .3); }
+:root[data-retro] :is(.menu, #t-menu) { background: var(--bg); box-shadow: var(--frame); padding: 2px; }
+:root[data-retro] :is(.menu button, #t-menu button) { height: 22px; color: var(--text); }
+:root[data-retro] #t-menu button:hover { background: var(--sel-bg); color: var(--sel-fg); }
+:root[data-retro] .toast { background: var(--bg); box-shadow: var(--frame); }
+:root[data-retro] .drop-card { background: var(--bg); box-shadow: var(--frame); outline-color: var(--accent); }
+:root[data-retro] .pal-input, :root[data-retro] .pal-foot, :root[data-retro] .comp-foot, :root[data-retro] .set-foot, :root[data-retro] .ins-foot { border-color: var(--border); }
+
+/* the small download windows */
+:root[data-retro] #root { background: var(--bg); box-shadow: var(--frame); }
+:root[data-retro] .w-bar { height: 24px; margin: 2px 2px 4px; padding: 0 2px 0 6px; background: var(--title-bg); }
+:root[data-retro] .w-title { color: var(--title-fg); font-weight: 700; font-size: var(--fs); }
+:root[data-retro] .w-btn { width: 18px; height: 16px; color: var(--text); }
+:root[data-retro] .t-files { box-shadow: var(--sunken); background: var(--panel); }
+:root[data-retro] .t-head { background: var(--bg); color: var(--text); box-shadow: 0 1px 0 var(--border); }
+:root[data-retro] .t-row:hover { background: var(--hover); }
+:root[data-retro] button.t-pr:hover { background: var(--hover); }
+:root[data-retro] #t-menu .rd { box-shadow: inset 0 0 0 1px currentColor; }
+
+/* scrollbars */
+:root[data-retro] ::-webkit-scrollbar { width: 16px; height: 16px; }
+:root[data-retro] ::-webkit-scrollbar-track { background: var(--scroll); }
+:root[data-retro] ::-webkit-scrollbar-thumb { background: var(--bg); border: 0; border-radius: 0; box-shadow: var(--raised); }
+:root[data-retro] ::-webkit-scrollbar-thumb:hover { background-color: var(--bg); }
+
+/* a few per-theme touches */
+:root[data-theme="system7"] .row.sel .r-ext, :root[data-theme="system7"] .row.sel .cat { background: #000; box-shadow: inset 0 0 0 1px #fff; }
+:root[data-theme="gnome2"] .btn.primary { color: #2e3436; }
+:root[data-theme="gnome2"] :is(.mini i, .ins-bar i, .p-bar i, .cmap .fill) { background-image: linear-gradient(#8fbbe8, transparent 60%); }
+:root[data-theme="platinum"] :is(.mini i, .ins-bar i, .p-bar i) { background-image: linear-gradient(rgba(255, 255, 255, .45), transparent 60%); }

@@ -9,6 +9,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, Session, SessionOptions};
 use serde::Serialize;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -120,7 +121,20 @@ pub struct Job {
     pub dir: PathBuf,
     /// Indexes of the files to download; empty means all of them.
     pub files: Vec<usize>,
+    /// Priority by file index (see `Item::torrent_prio`); empty = all equal.
+    pub prio: Vec<i8>,
     pub seed: Seed,
+}
+
+/// The chosen files grouped by priority, highest first. The engine can only
+/// download a set of files, so lower groups are added once the higher ones
+/// are done. One group (the usual case) behaves exactly as before.
+fn tiers(files: &[usize], prio: &[i8]) -> Vec<Vec<usize>> {
+    let level = |i: usize| prio.get(i).copied().unwrap_or(0);
+    let mut levels: Vec<i8> = files.iter().map(|&i| level(i)).collect();
+    levels.sort_unstable_by(|a, b| b.cmp(a));
+    levels.dedup();
+    levels.into_iter().map(|l| files.iter().copied().filter(|&i| level(i) == l).collect()).collect()
 }
 
 /// Downloads a torrent, reporting into `progress` and `note`. Cancelling
@@ -132,9 +146,11 @@ pub async fn run(client: &Client, job: Job, progress: Arc<Progress>, note: crate
     let session = session().await?;
     std::fs::create_dir_all(&job.dir)?;
     let add = source(client, &job.url, &job.headers).await?;
+    let groups = tiers(&job.files, &job.prio);
+    let multi = groups.len() > 1;
     let opts = AddTorrentOptions {
         output_folder: Some(job.dir.to_string_lossy().into_owned()),
-        only_files: (!job.files.is_empty()).then(|| job.files.clone()),
+        only_files: if multi { Some(groups[0].clone()) } else { (!job.files.is_empty()).then(|| job.files.clone()) },
         overwrite: true, // lets a paused torrent pick up the pieces already on disk
         ..Default::default()
     };
@@ -143,21 +159,40 @@ pub async fn run(client: &Client, job: Job, progress: Arc<Progress>, note: crate
         _ = cancel.cancelled() => { set_note(None); return Ok(Outcome::Paused); }
     };
 
+    // With priority groups the total is everything chosen, not just the
+    // group being downloaded now.
+    let all_total: u64 = if multi {
+        handle.with_metadata(|m| job.files.iter().filter_map(|&i| m.file_infos.get(i)).map(|f| f.len).sum()).unwrap_or(0)
+    } else {
+        0
+    };
+    let (mut group, mut settle) = (0usize, 0u32);
     let outcome = loop {
         let stats = handle.stats();
         if let Some(e) = &stats.error {
             break Err(anyhow!("{e}"));
         }
-        progress.total.store(stats.total_bytes, Ordering::Relaxed);
+        progress.total.store(if multi && all_total > 0 { all_total } else { stats.total_bytes }, Ordering::Relaxed);
         progress.resumable.store(true, Ordering::Relaxed);
         // While the engine checks the disk first, progress_bytes counts the
         // check, not data; report it only once the torrent is live.
         if stats.live.is_some() || stats.finished {
             progress.downloaded.store(stats.progress_bytes, Ordering::Relaxed);
         }
-        if stats.finished {
-            break Ok(Outcome::Completed);
+        if stats.finished && settle == 0 {
+            if group + 1 < groups.len() {
+                // This priority group is done: start the next one.
+                group += 1;
+                let set: HashSet<usize> = groups[..=group].iter().flatten().copied().collect();
+                if let Err(e) = session.update_only_files(&handle, &set).await {
+                    break Err(anyhow!("couldn't start the next priority group: {e}"));
+                }
+                settle = 4; // give the engine a moment to notice before trusting "finished" again
+            } else {
+                break Ok(Outcome::Completed);
+            }
         }
+        settle = settle.saturating_sub(1);
         match &stats.live {
             Some(live) => {
                 let peers = live.snapshot.peer_stats.live;
@@ -365,6 +400,16 @@ mod tests {
     }
 
     #[test]
+    fn groups_files_by_priority() {
+        // No priorities: one group, as before.
+        assert_eq!(tiers(&[0, 1, 2], &[]), vec![vec![0, 1, 2]]);
+        // Highest first; files without a level count as normal (0).
+        assert_eq!(tiers(&[0, 1, 2, 3], &[0, 2, -1, 2]), vec![vec![1, 3], vec![0], vec![2]]);
+        // Only the chosen files are grouped.
+        assert_eq!(tiers(&[2], &[5, 5, 1]), vec![vec![2]]);
+    }
+
+    #[test]
     fn finds_the_link_to_open() {
         let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(parse_open_arg(&args(&["swiftdl", "--open", "magnet:?xt=urn:btih:abc"])).unwrap().url, "magnet:?xt=urn:btih:abc");
@@ -390,7 +435,7 @@ mod live {
             let note = crate::media::Note::default();
             let cancel = CancellationToken::new();
             let dir = std::env::temp_dir().join("swiftdl-torrent-test");
-            let job = Job { url: url.into(), headers: HeaderMap::new(), dir: dir.clone(), files: vec![], seed: Seed::Stop };
+            let job = Job { url: url.into(), headers: HeaderMap::new(), dir: dir.clone(), files: vec![], prio: vec![], seed: Seed::Stop };
             let (p, n, c) = (progress.clone(), note.clone(), cancel.clone());
             let watch = tauri::async_runtime::spawn(async move {
                 for s in 0..30 {
