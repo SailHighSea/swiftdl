@@ -251,8 +251,9 @@ pub async fn probe_media(m: Mgr<'_>, url: String, cookies: Option<String>) -> Re
 /// A video-site link pasted into the main window: choose its quality in a
 /// "New download" window, like a link caught from the browser.
 #[tauri::command]
-pub fn open_new_download(m: Mgr, url: String) {
+pub async fn open_new_download(m: Mgr<'_>, url: String) -> Result<(), String> {
     m.new_download_window(Incoming { url: url.trim().to_string(), filename: None, referrer: None, cookies: None, user_agent: None, method: None, body: None, content_type: None });
+    Ok(())
 }
 
 #[tauri::command]

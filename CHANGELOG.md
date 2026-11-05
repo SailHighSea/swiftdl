@@ -6,6 +6,12 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Pasting or typing a video-site link (YouTube etc.) in New download no longer
+  freezes the dialog; the quality window now opens.
+- The "Download video" button on a YouTube watch page always downloads that
+  page's video, not an "up next" video linked near the player.
+
 ### Added
 - Select several downloads with Shift+click (range), Ctrl+click (toggle),
   Shift+arrows or Ctrl+A, then pause, resume, copy links or remove them together.

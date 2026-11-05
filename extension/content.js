@@ -37,6 +37,9 @@
   // link around the player instead, walking out through shadow roots too.
   const POST_LINK = /\/comments\/[a-z0-9]+|\/(reel|reels|videos|watch|shorts|status|tv|p|video|clip)\/|\/share\/[rvp]\/|[?&]v=|\/posts\/|\/permalink|story_fbid|pfbid|\/stories\/\d+\/[^/?#]+/i;
   function pageUrlFor(v) {
+    // On a video's own page the address bar is the video. Searching around the
+    // player would pick up an "up next" or end-screen link to another video.
+    if (/(^|\.)youtube(-nocookie)?\.com$/i.test(location.hostname) && (/^\/(shorts|live)\/[\w-]+/.test(location.pathname) || (location.pathname === "/watch" && new URLSearchParams(location.search).has("v")))) return location.href;
     const abs = (h) => { try { return new URL(h, location.href).href; } catch { return null; } };
     let n = v, depth = 0;
     while (n && depth < 14) {
