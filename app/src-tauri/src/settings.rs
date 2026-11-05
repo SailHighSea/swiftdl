@@ -30,6 +30,14 @@ pub struct Settings {
     /// After a torrent finishes: "stop", a share ratio such as "1" or "2",
     /// or "forever".
     pub seed_until: String,
+    /// Start SwiftDL (hidden in the tray) when the user signs in.
+    pub start_with_system: bool,
+    /// Look for a newer SwiftDL on GitHub at startup and every few hours.
+    pub auto_update_check: bool,
+    /// Also offer dev builds (GitHub pre-releases).
+    pub include_dev_builds: bool,
+    /// Write ordinary events to the log file, not just errors and crashes.
+    pub debug_log: bool,
 }
 
 impl Default for Settings {
@@ -48,6 +56,10 @@ impl Default for Settings {
             close_to_tray: true,
             theme: "system".into(),
             seed_until: "stop".into(),
+            start_with_system: false,
+            auto_update_check: true,
+            include_dev_builds: false,
+            debug_log: false,
         }
     }
 }

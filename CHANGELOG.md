@@ -7,7 +7,39 @@ uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- **Firefox add-on.** The extension now runs in Firefox 128 and later, built
+- Select several downloads with Shift+click (range), Ctrl+click (toggle),
+  Shift+arrows or Ctrl+A, then pause, resume, copy links or remove them together.
+- An icon button to clear completed downloads from the list.
+- A Torrents category in the sidebar for torrent and magnet downloads.
+- Settings: start with Windows (hidden in the tray), a debug log (plus an
+  always-on log of errors and crashes), check for updates, automatic update
+  checks, an option to include dev builds, and a link to the GitHub repository.
+  A new version shows as a notification that opens its release page.
+- Dev builds now come with installers for Windows, macOS and Linux too.
+
+### Fixed
+- The video button now finds videos inside shadow DOM, so it appears on more
+  sites, and on feeds it sends the video's own link instead of the site's
+  front page.
+- OneDrive/SharePoint "download as zip" (and other downloads a page starts
+  with a form button) failed with "405 Method Not Allowed", because SwiftDL
+  could only repeat a plain GET. The extension now passes the form's POST
+  request to the app, which repeats it (one connection, no resume). A
+  "Form (POST) downloads" switch in the extension popup turns this off so the
+  browser handles them; the per-site switch already skips a whole site.
+- Show in folder on the download-complete window now closes the window.
+
+## [0.3.1] - 2026-11-04
+
+### Fixed
+- **Magnet links and .torrent files did nothing** when you clicked Start
+  download or Download later: adding a download only accepted web links, and
+  the window didn't show the error. Magnet links and .torrent files on your
+  computer are now accepted, pasting a magnet link into New download works,
+  and any error adding a download is shown in the window.
+
+### Added
+- **Firefox add-on.** The extension now runs in Firefox 140 and later, built
   from the same code with Firefox's manifest and shipped with the app and as
   `swiftdl-firefox.xpi`. SwiftDL registers its native messaging host for
   Firefox, and Settings → Browser lists Firefox.
@@ -45,7 +77,7 @@ uses [Semantic Versioning](https://semver.org/).
 ## [0.2.1] - 2026-10-30
 
 ### Added
-- **YouTube and other video sites.** The video button, the popup and the New
+- **Video sites.** The video button, the popup and the New
   download window offer each quality, from 4K down to audio only. These sites
   go through yt-dlp, with ffmpeg joining video and audio; both are fetched on
   first use (ffmpeg comes from the system on macOS and Linux) and yt-dlp is
@@ -128,7 +160,8 @@ uses [Semantic Versioning](https://semver.org/).
 - GitHub Actions for CI and tagged releases (Windows, macOS, Linux and the
   extension zip).
 
-[Unreleased]: https://github.com/harshsinghsv/swiftdl/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/harshsinghsv/swiftdl/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/harshsinghsv/swiftdl/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/harshsinghsv/swiftdl/compare/v0.2.3...v0.3.0
 [0.2.3]: https://github.com/harshsinghsv/swiftdl/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/harshsinghsv/swiftdl/compare/v0.2.1...v0.2.2

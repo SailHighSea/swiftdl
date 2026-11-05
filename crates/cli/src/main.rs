@@ -110,6 +110,7 @@ async fn run(args: Args) -> Result<Option<PathBuf>> {
         connections: args.connections as usize,
         headers,
         restart: args.restart,
+        post_body: None,
     };
     let limiter = Arc::new(SpeedLimiter::new(args.limit * 1024));
     let outcome = swiftdl_engine::run(&client, &req, progress.clone(), cancel, limiter).await;

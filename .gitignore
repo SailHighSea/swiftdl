@@ -3,3 +3,7 @@
 node_modules/
 /app/src-tauri/gen/
 /.claude/
+/test/
+
+# Notes for Claude, local only
+CLAUDE.md

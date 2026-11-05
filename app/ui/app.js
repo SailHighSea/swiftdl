@@ -44,6 +44,8 @@ const P = {
   doc: '<path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5M9 12.5h6M9 16h6"/>',
   image: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.7"/><path d="m20.5 15.5-4.5-4.5-9.5 8.5"/>',
   file: '<path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5"/>',
+  magnet: '<path d="M6 4v8a6 6 0 0 0 12 0V4h-4v8a2 2 0 0 1-4 0V4z"/><path d="M6 8h4M14 8h4"/>',
+  clearList: '<path d="M4 7h11M4 12h7M4 17h11"/><path d="m15.5 12.5 5 5M20.5 12.5l-5 5"/>',
 };
 const icon = (n) => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${P[n] || P.file}</svg>`;
 const hydrate = () => document.querySelectorAll("i[data-icon]").forEach((el) => {
@@ -59,6 +61,7 @@ const CATS = {
   Music: { color: "#ec4899", icon: "music" },
   Programs: { color: "#3b82f6", icon: "app" },
   Compressed: { color: "#f59e0b", icon: "archive" },
+  Torrents: { color: "#14b8a6", icon: "magnet" },
   Documents: { color: "#10b981", icon: "doc" },
   Images: { color: "#f97316", icon: "image" },
   Other: { color: "#8b8f98", icon: "file" },
@@ -123,7 +126,7 @@ const STATUS = { downloading: "Downloading", queued: "Queued", paused: "Paused",
 const HISTORY = 120;
 const LIMITS = [0, 256, 1024, 5120, 10240];
 const state = {
-  items: [], settings: null, view: "all", search: "", selected: null, pending: [],
+  items: [], settings: null, view: "all", search: "", selected: null, sel: new Set(), anchor: null, pending: [], update: null,
   speedHist: new Map(), totalHist: [], typesOpen: true,
 };
 const VIEWS = {
@@ -235,6 +238,7 @@ function renderHeader(list) {
   $("h-icon").innerHTML = v ? icon(v.icon) : typeIcon(state.view);
   $("h-name").textContent = v ? v.name : state.view;
   $("h-count").textContent = list.length || "";
+  $("btn-clear-done").hidden = !list.some((i) => i.status === "completed");
   $("btn-pause-all").hidden = !list.some(isActive);
   $("btn-resume-all").hidden = !list.some((i) => i.status === "paused" || i.status === "error");
 }
@@ -262,7 +266,8 @@ function meta(it) {
   }
 }
 function updateRow(el, it) {
-  el.classList.toggle("sel", state.selected === it.id);
+  el.classList.toggle("sel", state.sel.has(it.id));
+  el.classList.toggle("multi", state.sel.size > 1 && state.sel.has(it.id));
   set(el, 0, statusIcon(it));
   const e = ext(it.filename);
   set(el, 1, `<span class="r-name" title="${esc(it.filename)}">${esc(it.filename.replace(/\.[^.]+$/, "") || it.filename)}</span>${e ? `<span class="r-ext">${e}</span>` : ""}${it.status === "error" ? `<span class="r-err">${esc(it.error || "Failed")}</span>` : ""}`);
@@ -435,22 +440,22 @@ async function openStore(browser) {
 function renderBrowserPanel() {
   const i = state.integration;
   if (!i) return;
-  $("ext-status").className = `ext-status ${i.lastSeen ? "ok" : ""}`;
   const store = i.storeAvailable;
   const hint = store ? "Add it to a browser below, then open that browser once" : "Follow the steps below, then open the browser once";
-  const where = i.browsers.filter((b) => b.lastSeen).map((b) => b.name);
-  const title = where.length ? `Extension connected in ${where.join(", ").replace(/, ([^,]*)$/, " and $1")}` : "Extension not connected yet";
-  $("ext-status").innerHTML = `<span class="dot"></span><div class="sr-text"><b>${title}</b><span>${i.lastSeen ? `Last active ${when(i.lastSeen).toLowerCase()}` : hint}</span></div>`;
+  const connected = i.browsers.filter((b) => b.lastSeen).sort((a, b) => b.lastSeen - a.lastSeen);
+  const logo = (b, cls = "") => `<img class="blogo ${cls}" src="browsers/${b.id}.svg" alt="" width="28" height="28">`;
+  $("ext-status").innerHTML = connected.length
+    ? `${logo(connected[0])}<div class="sr-text"><b>Connected in ${connected.map((b) => b.name).join(", ").replace(/, ([^,]*)$/, " and $1")}</b><span>Last active ${when(connected[0].lastSeen).toLowerCase()}</span></div>`
+    : `<div class="sr-text"><b>Not connected yet</b><span>${hint}</span></div>`;
   const rank = (b) => (b.lastSeen ? 2 : b.installed ? 1 : 0);
   $("browser-list").innerHTML = [...i.browsers].sort((a, b) => rank(b) - rank(a)).map((b) => {
-    const sub = b.lastSeen ? `Extension connected · last active ${when(b.lastSeen).toLowerCase()}`
+    const sub = b.lastSeen ? `Connected · last active ${when(b.lastSeen).toLowerCase()}`
       : !b.installed ? "Not installed"
       : store && b.autoOffer ? "Installed · asks to enable the extension on next start" : "Installed";
     return `<div class="set-row">
-      <span class="bmono ${b.installed || b.lastSeen ? "" : "off"}">${icon("globe")}</span>
+      ${logo(b, b.installed || b.lastSeen ? "" : "off")}
       <div class="sr-text"><b>${b.name}</b><span>${sub}</span></div>
-      ${b.lastSeen ? `<span class="b-ok"><span class="dot"></span>Connected</span>`
-        : b.installed && store ? `<button type="button" class="btn sm" data-store="${b.id}">Add extension</button>` : ""}</div>`;
+      ${!b.lastSeen && b.installed && store ? `<button type="button" class="btn sm" data-store="${b.id}">Add extension</button>` : ""}</div>`;
   }).join("");
   // No store listing yet: show the manual steps up front, and hide the
   // automatic offer, which only works once the extension is on the store.
@@ -462,7 +467,10 @@ function renderBrowserPanel() {
 $("browser-list").addEventListener("click", (e) => { const b = e.target.closest("[data-store]"); if (b) openStore(b.dataset.store); });
 
 function render() {
-  if (state.selected != null && !byId(state.selected)) state.selected = null;
+  // Forget removed downloads; the inspector shows only a single selection.
+  for (const id of state.sel) if (!byId(id)) state.sel.delete(id);
+  if (state.anchor != null && !byId(state.anchor)) state.anchor = null;
+  state.selected = state.sel.size === 1 ? [...state.sel][0] : null;
   const list = renderList();
   renderNav();
   renderHeader(list);
@@ -470,13 +478,17 @@ function render() {
 }
 
 // ---------- toasts ----------
-function toast(msg, kind = "info") {
+function toast(msg, kind = "info", opts = {}) {
   const el = document.createElement("div");
-  el.className = "toast";
+  el.className = `toast${opts.sticky ? " sticky" : ""}`;
   const ic = kind === "ok" ? "check" : kind === "err" ? "alert" : kind === "dl" ? "download" : "info";
-  el.innerHTML = `<span class="t-ic ${kind}">${icon(ic)}</span><span>${msg}</span>`;
+  const close = () => { el.classList.add("out"); setTimeout(() => el.remove(), 200); };
+  el.innerHTML = `<span class="t-ic ${kind}">${icon(ic)}</span><span>${msg}</span>${opts.sticky ? `<button class="t-x" title="Dismiss">${icon("x")}</button>` : ""}`;
+  if (opts.sticky) {
+    el.onclick = (e) => { if (!e.target.closest(".t-x")) opts.onClick?.(); close(); };
+    el.querySelector(".t-x").onclick = (e) => { e.stopPropagation(); close(); };
+  } else setTimeout(close, 2800);
   $("toasts").append(el);
-  setTimeout(() => { el.classList.add("out"); setTimeout(() => el.remove(), 200); }, 2800);
   while ($("toasts").children.length > 3) $("toasts").firstElementChild.remove();
 }
 async function call(cmd, args) {
@@ -491,23 +503,29 @@ function toggle(it) {
   if (!it || it.status === "completed") return;
   isActive(it) ? pause([it.id]) : resume([it.id]);
 }
-function askDelete(it) {
-  if (!it) return;
+// Removes one download or several (an array); `title` overrides the wording
+// for "clear completed".
+function askDelete(target, title) {
+  const list = (Array.isArray(target) ? target : [target]).filter(Boolean);
+  if (!list.length) return;
   const dlg = $("dlg-delete");
-  const live = it.status !== "completed";
-  $("del-title").textContent = live ? "Cancel this download?" : "Remove from list?";
-  $("del-text").textContent = live ? `“${it.filename}” will stop and its partial data will be deleted.` : `“${it.filename}” will be removed from SwiftDL.`;
-  $("del-ok").textContent = live ? "Cancel download" : "Remove";
+  const many = list.length > 1;
+  const live = list.some((i) => i.status !== "completed");
+  const noun = many ? `${list.length} downloads` : `“${list[0].filename}”`;
+  $("del-title").textContent = title || (live ? (many ? "Cancel these downloads?" : "Cancel this download?") : "Remove from list?");
+  $("del-text").textContent = live ? `${noun} will stop and any partial data will be deleted.` : `${noun} will be removed from SwiftDL.`;
+  $("del-ok").textContent = live ? (many ? "Cancel downloads" : "Cancel download") : "Remove";
   $("del-files").checked = false;
   $("del-files-row").hidden = live;
   dlg.returnValue = "";
   dlg.onclose = () => {
     if (dlg.returnValue !== "ok") return;
-    call("remove", { ids: [it.id], deleteFiles: $("del-files").checked });
-    toast(live ? "Download cancelled" : "Removed from list", "ok");
+    call("remove", { ids: list.map((i) => i.id), deleteFiles: !live && $("del-files").checked });
+    toast(live ? (many ? "Downloads cancelled" : "Download cancelled") : many ? `Removed ${list.length} downloads` : "Removed from list", "ok");
   };
   dlg.showModal();
 }
+const selectedItems = () => [...state.sel].map(byId).filter(Boolean);
 function act(name, it, anchor) {
   if (!it) return;
   switch (name) {
@@ -522,15 +540,47 @@ function act(name, it, anchor) {
   }
 }
 function select(id, scroll = true) {
-  state.selected = id;
+  state.sel = new Set([id]);
+  state.anchor = id;
   render();
   if (scroll) rowEls.get(id)?.scrollIntoView({ block: "nearest" });
 }
-function move(d) {
+function clearSel() { state.sel = new Set(); state.anchor = null; render(); }
+// Click selects one, Ctrl/Cmd+click toggles, Shift+click selects the range
+// from the last click.
+function pick(id, e) {
+  if (e.shiftKey && state.anchor != null) {
+    const ids = orderIds(), a = ids.indexOf(state.anchor), b = ids.indexOf(id);
+    if (a >= 0 && b >= 0) {
+      const range = ids.slice(Math.min(a, b), Math.max(a, b) + 1);
+      state.sel = new Set(e.ctrlKey || e.metaKey ? [...state.sel, ...range] : range);
+      return render();
+    }
+  }
+  if (e.ctrlKey || e.metaKey) {
+    state.sel = new Set(state.sel);
+    state.sel.has(id) ? state.sel.delete(id) : state.sel.add(id);
+    state.anchor = id;
+    return render();
+  }
+  // Pressing on a row already in a multi-selection keeps it, so the whole
+  // selection can be right-clicked.
+  if (state.sel.size > 1 && state.sel.has(id)) return;
+  select(id, false);
+}
+let cursor = null; // the row the arrow keys move from
+function move(d, extend = false) {
   const ids = orderIds();
   if (!ids.length) return;
-  const i = ids.indexOf(state.selected);
-  select(ids[i < 0 ? (d > 0 ? 0 : ids.length - 1) : Math.max(0, Math.min(ids.length - 1, i + d))]);
+  const from = ids.indexOf(extend && cursor != null ? cursor : state.selected ?? cursor);
+  const to = ids[from < 0 ? (d > 0 ? 0 : ids.length - 1) : Math.max(0, Math.min(ids.length - 1, from + d))];
+  if (extend && state.anchor != null) {
+    const a = ids.indexOf(state.anchor), b = ids.indexOf(to);
+    state.sel = new Set(ids.slice(Math.min(a, b), Math.max(a, b) + 1));
+    cursor = to;
+    render();
+    rowEls.get(to)?.scrollIntoView({ block: "nearest" });
+  } else { select(to); cursor = to; }
 }
 
 // ---------- menus ----------
@@ -546,6 +596,18 @@ function showMenu(x, y, entries, above = false) {
   menu.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
 }
 function itemMenu(it, x, y, above = false) {
+  const many = selectedItems();
+  if (many.length > 1 && state.sel.has(it.id)) {
+    const n = many.length;
+    return showMenu(x, y, [
+      { title: `${n} downloads selected` },
+      { icon: "play", label: "Resume", enabled: many.some((i) => i.status === "paused" || i.status === "error"), run: () => resume(many.filter((i) => i.status === "paused" || i.status === "error").map((i) => i.id)) },
+      { icon: "pause", label: "Pause", enabled: many.some(isActive), run: () => pause(many.filter(isActive).map((i) => i.id)) },
+      { icon: "link", label: "Copy links", run: () => copy(many.map((i) => i.url).join("\n"), `${n} links copied`) },
+      "-",
+      { icon: "trash", label: `Remove ${n} downloads…`, danger: true, run: () => askDelete(many) },
+    ], above);
+  }
   showMenu(x, y, [
     { icon: "open", label: "Open", keys: ["Enter"], enabled: it.status === "completed", run: () => act("open", it) },
     { icon: "folder", label: "Show in folder", keys: ["O"], run: () => act("folder", it) },
@@ -561,17 +623,35 @@ document.addEventListener("mousedown", (e) => { if (!e.target.closest("#menu") &
 document.addEventListener("contextmenu", (e) => { if (!e.target.closest("input")) e.preventDefault(); });
 
 // ---------- events ----------
-$("rows").addEventListener("mousedown", (e) => { const r = e.target.closest(".row"); if (r) select(Number(r.dataset.id), false); });
+$("rows").addEventListener("mousedown", (e) => {
+  const r = e.target.closest(".row");
+  if (!r || e.button === 2 && state.sel.has(Number(r.dataset.id))) return; // right-click keeps the selection
+  if (e.shiftKey) e.preventDefault(); // no text selection while ranging
+  pick(Number(r.dataset.id), e);
+  cursor = Number(r.dataset.id);
+});
+// A plain click inside a multi-selection narrows it to that row.
+$("rows").addEventListener("click", (e) => {
+  const r = e.target.closest(".row");
+  if (r && !e.shiftKey && !e.ctrlKey && !e.metaKey && state.sel.size > 1) select(Number(r.dataset.id), false);
+});
 $("rows").addEventListener("dblclick", (e) => {
   const r = e.target.closest(".row"), it = r && byId(Number(r.dataset.id));
   if (it) it.status === "completed" ? act("open", it) : toggle(it);
 });
-$("rows").addEventListener("contextmenu", (e) => { const r = e.target.closest(".row"); if (r) { e.preventDefault(); itemMenu(byId(Number(r.dataset.id)), e.clientX, e.clientY); } });
-$("list").addEventListener("mousedown", (e) => { if (!e.target.closest(".row") && !e.target.closest(".ghead") && !e.target.closest(".empty") && state.selected != null) { state.selected = null; render(); } });
+$("rows").addEventListener("contextmenu", (e) => {
+  const r = e.target.closest(".row");
+  if (!r) return;
+  e.preventDefault();
+  const id = Number(r.dataset.id);
+  if (!state.sel.has(id)) select(id, false);
+  itemMenu(byId(id), e.clientX, e.clientY);
+});
+$("list").addEventListener("mousedown", (e) => { if (!e.target.closest(".row") && !e.target.closest(".ghead") && !e.target.closest(".empty") && state.sel.size) clearSel(); });
 $("inspector").addEventListener("click", (e) => {
   const b = e.target.closest("[data-ins]");
   if (!b) return;
-  if (b.dataset.ins === "close") { state.selected = null; render(); return; }
+  if (b.dataset.ins === "close") { clearSel(); return; }
   act(b.dataset.ins, byId(state.selected), b);
 });
 $("nav").addEventListener("click", (e) => {
@@ -579,6 +659,10 @@ $("nav").addEventListener("click", (e) => {
   const b = e.target.closest("[data-view]");
   if (b) { state.view = b.dataset.view; state.search = ""; render(); }
 });
+$("btn-clear-done").onclick = () => {
+  const done = visible().filter((i) => i.status === "completed");
+  askDelete(done, `Clear ${done.length === 1 ? "this completed download" : `${done.length} completed downloads`}?`);
+};
 $("btn-pause-all").onclick = () => pause(visible().filter(isActive).map((i) => i.id));
 $("btn-resume-all").onclick = () => resume(visible().filter((i) => i.status === "paused" || i.status === "error").map((i) => i.id));
 $("btn-add").onclick = $("empty-add").onclick = () => openComposer();
@@ -607,22 +691,28 @@ document.addEventListener("keydown", (e) => {
   if (mod && k.toLowerCase() === "k") { e.preventDefault(); if (!$("dlg-palette").open) openPalette(); return; }
   if (document.querySelector("dialog[open]") || e.target.matches?.("input")) return;
   const it = state.selected != null ? byId(state.selected) : null;
-  if (mod && k.toLowerCase() === "n") { e.preventDefault(); openComposer(); }
+  if (mod && k.toLowerCase() === "a") { e.preventDefault(); state.sel = new Set(orderIds()); render(); }
+  else if (mod && k.toLowerCase() === "n") { e.preventDefault(); openComposer(); }
   else if (mod && k === ",") { e.preventDefault(); openSettings(); }
   else if (mod) return;
-  else if (k === "ArrowDown" || k === "j") { e.preventDefault(); move(1); }
-  else if (k === "ArrowUp" || k === "k") { e.preventDefault(); move(-1); }
-  else if (k === " ") { e.preventDefault(); toggle(it); }
+  else if (k === "ArrowDown" || k === "j") { e.preventDefault(); move(1, e.shiftKey); }
+  else if (k === "ArrowUp" || k === "k") { e.preventDefault(); move(-1, e.shiftKey); }
+  else if (k === " ") { e.preventDefault(); state.sel.size > 1 ? bulkToggle() : toggle(it); }
   else if (k === "Enter" && it) { e.preventDefault(); it.status === "completed" ? act("open", it) : toggle(it); }
-  else if ((k === "Delete" || k === "Backspace") && it) { e.preventDefault(); askDelete(it); }
+  else if ((k === "Delete" || k === "Backspace") && state.sel.size) { e.preventDefault(); askDelete(selectedItems()); }
   else if (k === "o" && it) act("folder", it);
   else if (k === "c" && it) act("copy", it);
   else if (k === "n") openComposer();
   else if (k === "/") { e.preventDefault(); openPalette(); }
-  else if (k === "Escape") { state.selected = null; render(); }
+  else if (k === "Escape") clearSel();
 });
+// Space on several rows: pause if any is running, else resume them.
+function bulkToggle() {
+  const items = selectedItems();
+  items.some(isActive) ? pause(items.filter(isActive).map((i) => i.id)) : resume(items.filter((i) => i.status === "paused" || i.status === "error").map((i) => i.id));
+}
 
-const firstUrl = (t) => (t || "").split(/\s+/).find((s) => /^https?:\/\/\S+$/i.test(s));
+const firstUrl = (t) => (t || "").split(/\s+/).find((s) => /^(https?:\/\/|magnet:\?)\S+$/i.test(s));
 document.addEventListener("paste", (e) => {
   if (document.querySelector("dialog[open]") || e.target.matches?.("input")) return;
   const url = firstUrl(e.clipboardData.getData("text"));
@@ -744,7 +834,7 @@ function renderChips() {
 }
 async function probe() {
   const url = $("add-url").value.trim();
-  if (!/^https?:\/\/\S+/i.test(url)) { add.info = null; $("add-file").hidden = true; renderChips(); url ? setState("error", "Links start with http:// or https://") : setState("idle"); return; }
+  if (!/^(https?:\/\/|magnet:\?)\S+/i.test(url)) { add.info = null; $("add-file").hidden = true; renderChips(); url ? setState("error", "Paste a web link (http:// or https://) or a magnet link") : setState("idle"); return; }
   const seq = ++add.seq;
   // Video sites need a quality and torrents a file choice: their own window.
   const special = await invoke("is_media_url", { url }).catch(() => false) || await invoke("is_torrent_url", { url, filename: null }).catch(() => false);
@@ -836,7 +926,13 @@ function openSettings(tab = "general") {
   $("set-offer").checked = s.offerExtension;
   $("set-progress-win").checked = s.showProgressWindow;
   $("set-tray").checked = s.closeToTray;
+  $("set-start").checked = s.startWithSystem;
+  $("set-autoupdate").checked = s.autoUpdateCheck;
+  $("set-devchannel").checked = s.includeDevBuilds;
+  $("set-debuglog").checked = s.debugLog;
+  renderUpdateStatus();
   loadIntegration();
+  loadTools();
   $("set-conns").value = s.connections;
   $("set-concurrent").value = s.maxConcurrent;
   setLimitKib = s.speedLimitKib;
@@ -844,6 +940,32 @@ function openSettings(tab = "general") {
   showTab(tab);
   $("dlg-settings").showModal();
 }
+// yt-dlp, deno and ffmpeg: what video downloads need, and where they live.
+async function loadTools() {
+  const t = await call("tools_status").catch(() => null);
+  if (!t) return;
+  const have = [["yt-dlp", t.ytdlp], ["deno", t.deno], ["ffmpeg", t.ffmpeg]].map(([n, ok]) => `${n}: ${ok ? "ready" : "missing"}`).join(" - ");
+  $("set-tools-info").textContent = `${have}. Saved to ${t.dir}${t.portable ? " (portable)" : ""}`;
+  const missing = !t.ytdlp || !t.deno || (!t.ffmpeg && t.ffmpegDownloadable);
+  $("set-tools-go").hidden = !missing;
+  $("set-tools-go").disabled = false;
+}
+$("set-tools-go").onclick = async () => {
+  const bar = $("set-tools-bar"), go = $("set-tools-go");
+  go.disabled = true; bar.hidden = false;
+  const poll = setInterval(async () => {
+    const note = await call("tools_note").catch(() => null);
+    if (!note) return;
+    $("set-tools-note").textContent = note;
+    const pct = /(\d+)%/.exec(note);
+    bar.querySelector("i").style.width = pct ? `${pct[1]}%` : "100%";
+  }, 250);
+  try { await call("install_tools"); toast("Video tools are ready"); }
+  catch (e) { toast(String(e)); }
+  clearInterval(poll);
+  bar.hidden = true;
+  loadTools();
+};
 function renderLimits() {
   $("set-limits").innerHTML = LIMITS.map((k) => `<button type="button" data-k="${k}" class="${k === setLimitKib ? "on" : ""}">${k ? bytes(k * 1024) + "/s" : "Off"}</button>`).join("");
   const c = $("set-limit-custom");
@@ -880,6 +1002,10 @@ $("form-settings").addEventListener("submit", async (e) => {
     offerExtension: $("set-offer").checked,
     showProgressWindow: $("set-progress-win").checked,
     closeToTray: $("set-tray").checked,
+    startWithSystem: $("set-start").checked,
+    autoUpdateCheck: $("set-autoupdate").checked,
+    includeDevBuilds: $("set-devchannel").checked,
+    debugLog: $("set-debuglog").checked,
     onboardingDismissed: state.settings.onboardingDismissed,
     theme: setThemeChoice,
     seedUntil: setSeed,
@@ -888,8 +1014,55 @@ $("form-settings").addEventListener("submit", async (e) => {
   toast("Settings saved", "ok");
 });
 
+// ---------- updates ----------
+// Looks at GitHub's releases; the card and button open the release page,
+// where the installers are.
+const updateCheck = { last: 0, error: "", checking: false };
+function renderUpdateStatus() {
+  const el = $("update-status"), u = state.update;
+  el.className = updateCheck.error ? "err" : u ? "" : updateCheck.last ? "ok" : "";
+  el.textContent = updateCheck.checking ? "Checking…"
+    : updateCheck.error ? `Couldn't check: ${updateCheck.error}`
+    : u ? `${u.tag} is available (you have ${state.tag})`
+    : updateCheck.last ? `You're up to date (${state.tag})` : `You have ${state.tag || "this version"}`;
+  $("update-check").disabled = updateCheck.checking;
+}
+// `manual` also reports "up to date" and errors; automatic checks stay quiet.
+async function checkForUpdate(manual = false) {
+  if (updateCheck.checking) return;
+  updateCheck.checking = true; updateCheck.error = "";
+  renderUpdateStatus();
+  // The switch in an open Settings window applies to the check at once.
+  const dev = $("dlg-settings").open ? $("set-devchannel").checked : state.settings.includeDevBuilds;
+  try {
+    const found = await invoke("check_update", { includeDev: dev });
+    updateCheck.last = Date.now();
+    const isNew = found && found.tag !== state.update?.tag;
+    state.update = found;
+    if (isNew) toast(`<span class="t-body"><b>${found.prerelease ? "Dev build" : "Update"} ${esc(found.tag)} available</b><small>Click to open the download page</small></span>`, "dl", { sticky: true, onClick: () => call("open_url", { url: found.url }) });
+    if (manual && !found) toast("SwiftDL is up to date", "ok");
+  } catch (e) {
+    updateCheck.error = String(e);
+    if (manual) toast(esc(updateCheck.error), "err");
+  }
+  updateCheck.checking = false;
+  renderUpdateStatus();
+}
+$("update-check").onclick = () => checkForUpdate(true);
+$("repo-link").onclick = (e) => { e.preventDefault(); call("open_url", { url: `https://github.com/${state.repo || "SailHighSea/swiftdl"}` }); };
+$("open-logs").onclick = () => call("open_log_folder");
+$("set-devchannel").addEventListener("change", () => { state.update = null; renderUpdateStatus(); });
+// A few seconds after start, then every six hours while it's running.
+function scheduleUpdateChecks() {
+  const auto = () => { if (state.settings.autoUpdateCheck) checkForUpdate(false); };
+  setTimeout(auto, 5000);
+  setInterval(auto, 6 * 3600 * 1000);
+}
+
 // ---------- data ----------
 function ingest(items) {
+  // Torrents (also ones added before this category existed) get their own.
+  for (const it of items) if (Array.isArray(it.torrentFiles)) it.category = "Torrents";
   state.items = items;
   let total = 0;
   for (const it of items) {
@@ -910,7 +1083,12 @@ async function boot() {
   state.settings = s.settings;
   window.setTheme(s.settings.theme);
   state.pending = s.pending;
-  $("version").textContent = `Version ${s.version}`;
+  const info = await invoke("app_info").catch(() => null);
+  state.tag = info?.tag; state.repo = info?.repo;
+  $("version").textContent = `Version ${s.version}${info?.tag && info.tag !== `v${s.version}` ? ` (${info.tag})` : ""}`;
+  if (info?.logFile) $("log-path").textContent = info.logFile;
+  if (/Windows/i.test(navigator.userAgent)) $("set-start-title").textContent = "Start with Windows"; else $("set-start-title").textContent = "Start when I sign in";
+  scheduleUpdateChecks();
   ingest(s.items);
   nextPending();
   loadIntegration();

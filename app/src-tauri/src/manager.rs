@@ -56,10 +56,14 @@ pub struct Item {
     pub speed: f64,
     #[serde(default, skip_deserializing)]
     pub connections: usize,
-    /// yt-dlp format for downloads from video sites (YouTube and others),
+    /// yt-dlp format for downloads from video sites (and similar sites),
     /// which go through yt-dlp instead of the engine.
     #[serde(default)]
     pub format: Option<String>,
+    /// Subtitles to fetch with a video: "file:en,fr" (saved beside it) or
+    /// "embed:en" (inside it).
+    #[serde(default)]
+    pub subtitles: Option<String>,
     /// For a torrent or magnet link: the files chosen (empty = all). Its
     /// presence marks the download as a torrent.
     #[serde(default)]
@@ -83,6 +87,26 @@ pub struct Incoming {
     pub cookies: Option<String>,
     #[serde(default)]
     pub user_agent: Option<String>,
+    /// "POST" when the page started the download with a form POST.
+    #[serde(default)]
+    pub method: Option<String>,
+    /// The POST body, base64.
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub content_type: Option<String>,
+}
+
+/// Pseudo-headers that carry a POST download's method and body along with
+/// its real headers (UI, saved list, resume). Never sent to the server.
+pub const POST_METHOD: &str = "X-SwiftDL-Method";
+pub const POST_BODY: &str = "X-SwiftDL-Body";
+
+/// The base64 POST body among `headers`, decoded.
+pub fn post_body(headers: &[(String, String)]) -> Option<Vec<u8>> {
+    use base64::Engine;
+    let (_, b) = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(POST_BODY))?;
+    base64::engine::general_purpose::STANDARD.decode(b).ok()
 }
 
 impl Incoming {
@@ -105,6 +129,13 @@ impl Incoming {
         if let Some(u) = self.user_agent.as_ref().filter(|u| !u.is_empty()) {
             h.push(("User-Agent".into(), u.clone()));
         }
+        if let (Some(b), true) = (self.body.as_ref().filter(|b| !b.is_empty()), self.method.as_deref() == Some("POST")) {
+            h.push((POST_METHOD.into(), "POST".into()));
+            h.push((POST_BODY.into(), b.clone()));
+            if let Some(c) = self.content_type.as_ref().filter(|c| !c.is_empty()) {
+                h.push(("Content-Type".into(), c.clone()));
+            }
+        }
         h
     }
 }
@@ -126,6 +157,9 @@ pub struct AddRequest {
     /// yt-dlp format, for a video-site download (see `Item::format`).
     #[serde(default)]
     pub format: Option<String>,
+    /// See `Item::subtitles`.
+    #[serde(default)]
+    pub subtitles: Option<String>,
     /// Expected size, when known up front (video qualities).
     #[serde(default)]
     pub size: Option<u64>,
@@ -239,7 +273,7 @@ impl DownloadManager {
                 id,
                 url: req.url,
                 filename: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or(filename.clone()),
-                category: category_for(&filename).to_string(),
+                category: if req.torrent_files.is_some() { "Torrents".into() } else { category_for(&filename).to_string() },
                 path,
                 size: req.size,
                 downloaded: 0,
@@ -254,6 +288,7 @@ impl DownloadManager {
                 speed: 0.0,
                 connections: 0,
                 format: req.format,
+                subtitles: req.subtitles,
                 torrent_files: req.torrent_files,
                 note: None,
             });
@@ -322,7 +357,13 @@ impl DownloadManager {
     pub fn set_settings(self: &Arc<Self>, settings: Settings) {
         self.limiter.set_rate(settings.speed_limit_kib * 1024);
         if let Err(e) = crate::browser::offer_extension(settings.offer_extension) {
-            eprintln!("could not update browser extension offer: {e:#}");
+            crate::applog::error(format!("could not update browser extension offer: {e:#}"));
+        }
+        crate::applog::set_verbose(settings.debug_log);
+        if settings.start_with_system != self.settings().start_with_system {
+            if let Err(e) = crate::autostart::set(settings.start_with_system) {
+                crate::applog::error(format!("could not change start with system: {e:#}"));
+            }
         }
         // Open windows (download windows) follow the theme at once.
         let _ = self.app.emit("settings", &settings);
@@ -347,10 +388,15 @@ impl DownloadManager {
         let this = self.clone();
         tauri::async_runtime::spawn(async move {
             let headers = inc.headers();
-            let probed = swiftdl_engine::probe(&this.client, &inc.url, &to_header_map(&headers)).await.ok().map(|r| r.filename);
+            // A POST download can't be probed (that would be a second request).
+            let probed = if post_body(&headers).is_some() {
+                None
+            } else {
+                swiftdl_engine::probe(&this.client, &inc.url, &to_header_map(&headers)).await.ok().map(|r| r.filename)
+            };
             let filename = inc.suggested_name().or(probed).unwrap_or_else(|| "download.bin".into());
             let dir = this.default_dir(category_for(&filename));
-            this.add(AddRequest { url: inc.url, filename, dir, headers, start: true, window: None, format: None, size: None, torrent_files: None });
+            this.add(AddRequest { url: inc.url, filename, dir, headers, start: true, window: None, format: None, subtitles: None, size: None, torrent_files: None });
         });
     }
 
@@ -364,7 +410,7 @@ impl DownloadManager {
             token
         };
         if let Err(e) = crate::windows::open(&self.app, &format!("new-{token}"), &format!("confirm={token}"), "New download") {
-            eprintln!("could not open the New download window: {e:#}");
+            crate::applog::error(format!("could not open the New download window: {e:#}"));
         }
     }
 
@@ -406,7 +452,7 @@ impl DownloadManager {
         };
         for (id, title) in to_open {
             if let Err(e) = crate::windows::open(&self.app, &format!("dl-{id}"), &format!("id={id}"), &title) {
-                eprintln!("could not open the download window: {e:#}");
+                crate::applog::error(format!("could not open the download window: {e:#}"));
             }
         }
     }
@@ -431,6 +477,7 @@ impl DownloadManager {
                         connections,
                         headers: to_header_map(&item.headers),
                         restart: false,
+                        post_body: post_body(&item.headers),
                     };
                     let progress = Arc::new(Progress::default());
                     progress.downloaded.store(item.downloaded, Ordering::Relaxed);
@@ -450,7 +497,7 @@ impl DownloadManager {
                     );
                     let kind = match (&item.torrent_files, &item.format) {
                         (Some(files), _) => Kind::Torrent(files.clone()),
-                        (None, Some(format)) => Kind::Media(format.clone()),
+                        (None, Some(format)) => Kind::Media(format.clone(), item.subtitles.clone()),
                         (None, None) => Kind::File,
                     };
                     (id, req, kind, progress, note, cancel)
@@ -465,9 +512,9 @@ impl DownloadManager {
             let this = self.clone();
             tauri::async_runtime::spawn(async move {
                 let result = match kind {
-                    Kind::Media(format) => {
+                    Kind::Media(format, subs) => {
                         let cookies = req.headers.get("cookie").and_then(|v| v.to_str().ok()).map(str::to_string);
-                        let job = crate::media::Job { url: req.url.clone(), format, dest: req.dest.clone(), cookies };
+                        let job = crate::media::Job { url: req.url.clone(), format, subs, dest: req.dest.clone(), cookies };
                         crate::media::run(&this.client, job, progress, note, cancel).await
                     }
                     Kind::Torrent(files) => {
@@ -526,6 +573,7 @@ impl DownloadManager {
                         }
                         Ok(Outcome::Paused) => item.status = Status::Paused,
                         Err(e) => {
+                            crate::applog::info(format!("download failed: {} ({}): {e:#}", item.filename, item.url));
                             item.status = Status::Error;
                             item.error = Some(format!("{e:#}"));
                         }
@@ -614,7 +662,7 @@ impl DownloadManager {
 enum Kind {
     File,
     /// A video site, through yt-dlp, with this format.
-    Media(String),
+    Media(String, Option<String>),
     /// A torrent or magnet link, with these files (empty = all).
     Torrent(Vec<usize>),
 }
@@ -622,6 +670,9 @@ enum Kind {
 pub fn to_header_map(headers: &[(String, String)]) -> HeaderMap {
     let mut map = HeaderMap::new();
     for (k, v) in headers {
+        if k.eq_ignore_ascii_case(POST_METHOD) || k.eq_ignore_ascii_case(POST_BODY) {
+            continue;
+        }
         if let (Ok(k), Ok(v)) = (HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_str(v)) {
             map.insert(k, v);
         }

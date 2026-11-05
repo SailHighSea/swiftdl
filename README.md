@@ -47,21 +47,26 @@ And it saves its progress every second, so a crash, a closed laptop or a dropped
 
 Click a download in your browser and SwiftDL takes it from there, with your cookies, so downloads behind a login still work. On video sites, the **Download video** button on the player lets you pick a quality, from 4K down to audio only:
 
-<p align="center"><img src="docs/assets/youtube.gif" width="820" alt="On a YouTube video, SwiftDL's Download video button opens a window with the quality set to 1080p60; the 412 MB video downloads and merges" /></p>
-
 Everything lands in one place: live speed, every connection, queue, pause and resume.
 
 <p align="center"><img src="docs/assets/app-dark.png" width="1000" alt="SwiftDL main window: downloads grouped by status, with live speed, connections and a detail panel" /></p>
 
 ## Download
 
-| Platform | Installer |
-| --- | --- |
-| **Windows** 10 and 11 | [`SwiftDL_x.y.z_x64-setup.exe`](https://github.com/harshsinghsv/swiftdl/releases/latest), installs per user, no admin rights needed |
-| **macOS** (Apple silicon and Intel) | [`SwiftDL_x.y.z_universal.dmg`](https://github.com/harshsinghsv/swiftdl/releases/latest) |
-| **Linux** | [`.AppImage`, `.deb` or `.rpm`](https://github.com/harshsinghsv/swiftdl/releases/latest) |
+**Portable** (unzip anywhere and run it; settings, downloads and tools stay in a `data` folder beside the app):
 
-Then add the [browser extension](#browser-extension) so SwiftDL can catch your downloads.
+| Platform | Download |
+| --- | --- |
+| **Windows** 10 and 11 (x64) | `SwiftDL_*_windows-x64-portable.zip`, run `SwiftDL.exe` |
+| **Windows on ARM** | `SwiftDL_*_windows-arm64-portable.zip` |
+| **macOS** (Apple silicon and Intel) | `SwiftDL_*_macos-universal-portable.zip`, open `SwiftDL.app` (right-click, **Open**, the first time) |
+| **Linux** (needs WebKitGTK 4.1) | `SwiftDL_*_linux-x64-portable.tar.gz`, run `./SwiftDL` |
+
+**Installers** come with tagged releases: Windows `.exe` or `.msi` (per user, no admin rights needed), macOS `.dmg`, and Linux `.AppImage`, `.deb` or `.rpm`.
+
+Get them from the [Releases page](https://github.com/harshsinghsv/swiftdl/releases). Builds named like `v0.3.1-dev1` are pre-releases made from the `dev` branch.
+
+Then add the [browser extension](#browser-extension) (Firefox, Chrome, Edge, Brave or Vivaldi) so SwiftDL can catch your downloads.
 
 > [!NOTE]
 > The official source for SwiftDL is [github.com/harshsinghsv/swiftdl](https://github.com/harshsinghsv/swiftdl). Download installers only from its [Releases page](https://github.com/harshsinghsv/swiftdl/releases).
@@ -114,6 +119,8 @@ SwiftDL checks the file before downloading: its real name, size, type and whethe
 - **Resume anything.** Pause, quit, lose your connection or crash: SwiftDL continues where it stopped.
 - **Torrents and magnet links.** Pick the files you want; SwiftDL opens magnet links and .torrent files from anywhere.
 - **Download video button.** A button appears over video players and lists the video and audio files the page loaded.
+- **Choose exactly what you get from video sites.** Pick video or audio only, the format (MP4, MKV, WebM), the codec (H.264, VP9, AV1 and more) and the quality, or pick any video and audio stream by hand. Add subtitles as a separate `.srt` file or embedded in the video.
+- **Portable.** Run it from a folder or a USB stick; nothing is written to your profile.
 - **Queue and speed limit.** Choose how many downloads run at once and cap total bandwidth.
 - **Tidy by default.** Files are sorted into Video, Music, Programs, Compressed and Documents folders.
 - **Command palette.** Press <kbd>Ctrl</kbd> <kbd>K</kbd> to find a download or run any action.
@@ -142,22 +149,38 @@ Eight connections finishing in exactly an eighth of the time shows the rebalanci
 
 ## Browser extension
 
-The SwiftDL extension works in **Chrome, Edge, Brave, Vivaldi and Firefox**:
+The SwiftDL extension works in **Firefox, Chrome, Edge, Brave and Vivaldi**.
+
+> [!TIP]
+> **Firefox is the developer's recommended browser for SwiftDL.** The add-on is signed by Mozilla and installs with one click.
+
+What it does:
 
 - Sends browser downloads to SwiftDL, with your cookies and referrer.
 - Adds **Download with SwiftDL** to the right-click menu on links and media.
 - Shows a **Download video** button over video players.
 - Hold <kbd>Alt</kbd> while clicking a link to let the browser handle that download.
-- Can be turned off for a single site from its popup.
+- Catches downloads that a page starts with a form button (OneDrive and SharePoint "Download" on several files, for example) by repeating the same request. These run on one connection and can't resume.
+- Can be turned off for a single site, or for form downloads only, from its popup.
 
-**Install it:** the extension comes with SwiftDL, so there's nothing extra to download. In SwiftDL, click **Add the extension** (or go to **Settings → Browser**) and follow the four steps:
+Open SwiftDL once after installing it: it registers itself with every browser it finds, so the extension can reach it. Then add the extension for your browser. In SwiftDL, **Settings → Browser** shows the steps and opens the extension folder.
+
+### Firefox
+
+1. Download `swiftdl-firefox.xpi` from the [Releases page](https://github.com/harshsinghsv/swiftdl/releases).
+2. Open the file in Firefox (or drag it onto a Firefox window) and click **Add**. Firefox 140 or later.
+3. Approve the access it asks for. SwiftDL needs it to pass downloads and cookies to the app on your computer.
+
+The `.xpi` on each release is signed by Mozilla, so it installs in regular Firefox. To try an unsigned build, open `about:debugging`, choose **This Firefox**, then **Load Temporary Add-on**, and pick `manifest.json` from the `extension-firefox` folder.
+
+### Chrome, Edge, Brave and Vivaldi
 
 1. Open `chrome://extensions` (or `edge://extensions`).
 2. Turn on **Developer mode**.
 3. Click **Load unpacked**.
-4. Choose SwiftDL's extension folder. The **Open extension folder** button takes you there. On Windows it's `%LOCALAPPDATA%\SwiftDL\extension`.
+4. Choose SwiftDL's extension folder. The **Open extension folder** button takes you there. In a portable copy it's the `extension` folder beside the app; with an installer on Windows it's `%LOCALAPPDATA%\SwiftDL\extension`.
 
-Use that folder rather than a copy: it stays in place while SwiftDL is installed and is refreshed when SwiftDL updates. If you don't have the app installed, `swiftdl-extension.zip` on the [latest release](https://github.com/harshsinghsv/swiftdl/releases/latest) has the same files.
+Use that folder rather than a copy: it stays in place and is refreshed when SwiftDL updates. If you don't have the app installed, `swiftdl-extension.zip` on the [Releases page](https://github.com/harshsinghsv/swiftdl/releases) has the same files.
 
 Once the extension is on the Chrome Web Store, SwiftDL will offer it automatically: Chrome, Edge and Brave show a one-time **New extension added** prompt and you click **Enable**. No browser lets an app install an extension silently.
 
@@ -170,9 +193,9 @@ When the server limits each connection, which many do, yes, by roughly the numbe
 </details>
 
 <details>
-<summary><b>Can it download videos from YouTube?</b></summary>
+<summary><b>Can it download videos from video sites?</b></summary>
 
-Yes, and from Vimeo, X, Reddit and other video sites. Click the **Download video** button on the player (or paste the link into **New download**) and pick a quality, from 4K down to audio only. These sites don't serve a plain file, so SwiftDL uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) for them, plus ffmpeg to join the video and audio. Both are downloaded the first time you need them (on macOS and Linux, install ffmpeg with Homebrew or your package manager), and yt-dlp is kept up to date. Only download what you have the right to. DRM-protected video, like Netflix, will never be supported.
+Yes, from Vimeo, X, Reddit and many other video sites. Click the **Download video** button on the player (or paste the link into **New download**) and pick a quality, from 4K down to audio only. These sites don't serve a plain file, so SwiftDL uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) for them, with [deno](https://deno.com) to solve some sites' checks and ffmpeg to join the video and audio. The first time you download a video, SwiftDL shows what it needs, where it will save it and the progress, and you click **Download tools** (Settings → General has the same button). On macOS and Linux, install ffmpeg with Homebrew or your package manager. yt-dlp is kept up to date. If a site answers "Sign in to confirm you're not a bot", start the download from the browser while you're logged in to that site, so your cookies are passed along. Only download what you have the right to. DRM-protected video, like Netflix, will never be supported.
 </details>
 
 <details>
@@ -196,7 +219,7 @@ No. It has no accounts, analytics or telemetry. It only connects to the servers 
 <details>
 <summary><b>How do I uninstall it?</b></summary>
 
-Use **Apps & features** on Windows (or remove the app on macOS and Linux). The uninstaller also removes SwiftDL's browser registrations.
+Installed with an installer: use **Apps & features** on Windows (or remove the app on macOS and Linux). The uninstaller also removes SwiftDL's browser registrations. Portable copy: close SwiftDL and delete its folder, including the `data` folder beside it.
 </details>
 
 ## Build from source
@@ -217,8 +240,8 @@ cd app/src-tauri && cargo tauri dev
 | [`crates/cli`](crates/cli) | `swiftdl`, a command-line downloader built on the engine |
 | [`app/src-tauri`](app/src-tauri) | The desktop app: download manager, windows, tray and browser integration |
 | [`app/ui`](app/ui) | The interface |
-| [`extension`](extension) | The Chromium extension (Manifest V3) |
-| [`tools`](tools) | A throttled test server and a native-messaging test client |
+| [`extension`](extension) | The browser extension (Manifest V3), for Firefox and Chromium browsers; the build writes Firefox's manifest to `app/src-tauri/gen/extension-firefox` |
+| [`tools`](tools) | A throttled test server, a native-messaging test client, and `test-build.ps1`, which builds installers and a portable copy into `test/` |
 
 Working on the interface only? Serve `app/ui` with any static server (`python -m http.server -d app/ui`) and open it in a browser. A simulated backend fills it with downloads, so no Rust build is needed.
 

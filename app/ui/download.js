@@ -27,11 +27,12 @@ const P = {
   doc: '<path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5M9 12.5h6M9 16h6"/>',
   image: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.7"/><path d="m20.5 15.5-4.5-4.5-9.5 8.5"/>',
   file: '<path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5"/>',
+  magnet: '<path d="M6 4v8a6 6 0 0 0 12 0V4h-4v8a2 2 0 0 1-4 0V4z"/><path d="M6 8h4M14 8h4"/>',
 };
 const icon = (n) => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${P[n] || P.file}</svg>`;
 const CATS = {
   Video: { color: "#8b5cf6", icon: "video" }, Music: { color: "#ec4899", icon: "music" }, Programs: { color: "#3b82f6", icon: "app" },
-  Compressed: { color: "#f59e0b", icon: "archive" }, Documents: { color: "#10b981", icon: "doc" }, Images: { color: "#f97316", icon: "image" },
+  Compressed: { color: "#f59e0b", icon: "archive" }, Torrents: { color: "#14b8a6", icon: "magnet" }, Documents: { color: "#10b981", icon: "doc" }, Images: { color: "#f97316", icon: "image" },
   Other: { color: "#8b8f98", icon: "file" },
 };
 const catOf = (name) => {
@@ -88,6 +89,18 @@ document.addEventListener("contextmenu", (e) => { if (!e.target.closest("input")
 
 const params = new URLSearchParams(location.search);
 
+// Adds the download, or shows why it couldn't be added above the buttons
+// (a failed click must never just do nothing). Returns its id, or null.
+async function addDownload(req) {
+  view.querySelector(".add-err")?.remove();
+  try {
+    return await invoke("add_download", { req });
+  } catch (e) {
+    view.querySelector(".d-foot")?.insertAdjacentHTML("beforebegin", `<p class="err add-err">Couldn't add the download: ${esc(String(e))}</p>`);
+    return null;
+  }
+}
+
 // ---------- New download (caught from the browser) ----------
 async function confirmView(token) {
   setTitle("New download");
@@ -98,6 +111,11 @@ async function confirmView(token) {
   if (inc.cookies) headers.push(["Cookie", inc.cookies]);
   if (inc.referrer) headers.push(["Referer", inc.referrer]);
   if (inc.userAgent) headers.push(["User-Agent", inc.userAgent]);
+  // A download the page started with a form POST: the app repeats the POST.
+  if (inc.method === "POST" && inc.body) {
+    headers.push(["X-SwiftDL-Method", "POST"], ["X-SwiftDL-Body", inc.body]);
+    if (inc.contentType) headers.push(["Content-Type", inc.contentType]);
+  }
   let dir = settings.downloadDir, dirTouched = false, info = null;
   if (await invoke("is_media_url", { url: inc.url })) return mediaView(token, inc, settings, headers);
   if (await invoke("is_torrent_url", { url: inc.url, filename: inc.filename || null })) return torrentView(token, inc, settings, headers);
@@ -122,7 +140,7 @@ async function confirmView(token) {
   $("c-start").focus();
 
   try {
-    info = await invoke("probe_url", { url: inc.url, headers });
+    info = await invoke("probe_url", { url: inc.url, headers, filename: inc.filename || null });
     const suggested = /\.[a-z0-9]{2,5}$/i.test(inc.filename || "") ? inc.filename.split(/[\\/]/).pop() : "";
     $("c-name").value = suggested || info.filename;
     $("c-cat").value = info.category;
@@ -140,7 +158,8 @@ async function confirmView(token) {
   const add = async (start) => {
     const filename = $("c-name").value.trim();
     if (!filename) return;
-    const id = await invoke("add_download", { req: { url: inc.url, filename, dir, headers, start, window: win?.label } });
+    const id = await addDownload({ url: inc.url, filename, dir, headers, start, window: win?.label });
+    if (id == null) return;
     invoke("forget_confirm", { token });
     if (!start) { $("w-close").click(); return; }
     history.replaceState(null, "", `?id=${id}`);
@@ -151,22 +170,101 @@ async function confirmView(token) {
   document.addEventListener("keydown", (e) => { if (e.key === "Enter" && !$("c-start").disabled && !e.target.matches("select")) { e.preventDefault(); $("c-start").click(); } });
 }
 
-// ---------- New download from a video site (YouTube and others) ----------
+// ---------- Video tools (yt-dlp, deno, ffmpeg) ----------
+// Video sites need three small programs. They're downloaded once, on the
+// user's say-so, to a folder shown beforehand.
+async function toolsPanel(box, status) {
+  const missing = [!status.ytdlp && "yt-dlp", !status.deno && "deno", !status.ffmpeg && status.ffmpegDownloadable && "ffmpeg"].filter(Boolean);
+  const size = (!status.ytdlp ? 18 : 0) + (!status.deno ? 40 : 0) + (!status.ffmpeg && status.ffmpegDownloadable ? 130 : 0);
+  const needsFfmpeg = !status.ffmpeg && !status.ffmpegDownloadable;
+  box.innerHTML = `
+    <div class="tools">
+      <b>Video downloads need ${missing.length === 1 ? "one more program" : "a few programs"}</b>
+      <p class="muted">${missing.length ? `${missing.map(esc).join(", ")} · about ${size} MB, downloaded once from their official GitHub releases.` : ""}
+        ${needsFfmpeg ? `<br>ffmpeg isn't installed. Install it with your package manager (brew install ffmpeg, or sudo apt install ffmpeg) to join video and audio.` : ""}</p>
+      <p class="muted">Saved to <span class="path-inline" title="${esc(status.dir)}">${esc(status.dir)}</span>${status.portable ? " (portable: stays beside the app)" : ""}</p>
+      <div class="tools-bar" hidden><div class="p-bar"><i></i></div><span class="muted" id="tools-note"></span></div>
+      <div class="tools-row"><button class="btn primary sm" id="tools-go">Download tools</button><span class="err" id="tools-err"></span></div>
+    </div>`;
+  return new Promise((resolve) => {
+    $("tools-go").onclick = async () => {
+      $("tools-go").disabled = true;
+      $("tools-err").textContent = "";
+      const bar = box.querySelector(".tools-bar");
+      bar.hidden = false;
+      const poll = setInterval(async () => {
+        const note = await invoke("tools_note").catch(() => null);
+        if (!note) return;
+        $("tools-note").textContent = note;
+        const pct = /(\d+)%/.exec(note);
+        bar.querySelector("i").style.width = pct ? `${pct[1]}%` : "100%";
+        bar.querySelector(".p-bar").classList.toggle("indet", !pct);
+      }, 250);
+      try {
+        await invoke("install_tools");
+        clearInterval(poll);
+        resolve(true);
+      } catch (e) {
+        clearInterval(poll);
+        bar.hidden = true;
+        $("tools-go").disabled = false;
+        $("tools-go").textContent = "Try again";
+        $("tools-err").textContent = String(e);
+      }
+    };
+  });
+}
+
+// ---------- New download from a video site (and similar sites) ----------
 // These go through yt-dlp: the page is probed for its qualities, and the
-// chosen one becomes the download's format.
+// chosen one becomes the download's format. "All formats" lets you pick the
+// video stream, audio stream and container yourself.
 const safeName = (s) => s.replace(/[<>:"/\\|?*\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/, "").slice(0, 150) || "video";
+const fpsOf = (s) => (s.fps > 30.5 ? Math.round(s.fps) : "");
+const vLabel = (s) => [s.height ? `${s.height}p${fpsOf(s)}` : s.note || "video", s.videoCodec, s.kind === "both" && s.audioCodec ? `+ ${s.audioCodec}` : null, s.ext.toUpperCase(), s.size ? bytes(s.size) : null, `id ${s.id}`].filter(Boolean).join(" · ");
+const aLabel = (s) => [s.audioCodec || "audio", s.bitrate ? `${Math.round(s.bitrate)} kbps` : null, s.sampleRate ? `${+(s.sampleRate / 1000).toFixed(1)} kHz` : null, s.ext.toUpperCase(), s.size ? bytes(s.size) : null, `id ${s.id}`].filter(Boolean).join(" · ");
+const best = (list) => list.reduce((a, b) => (!a || (b.bitrate || 0) > (a.bitrate || 0) ? b : a), null);
+const describe = (v, a) => [
+  v && `${v.videoCodec || "Video"}${v.width && v.height ? ` ${v.width}×${v.height}` : ""}${v.fps ? ` ${Math.round(v.fps)} fps` : ""}`,
+  a && `${a.audioCodec || "Audio"}${a.bitrate ? ` ${Math.round(a.bitrate)} kbps` : ""}`,
+].filter(Boolean).join("  +  ");
+// Which containers can hold which codecs.
+const MP4_OK = { video: ["H.264", "H.265", "AV1", "VP9"], audio: ["AAC", "MP3", "Opus", "AC-3", "E-AC-3"] };
+const WEBM_OK = { video: ["VP8", "VP9", "AV1"], audio: ["Opus", "Vorbis"] };
+const fits = (ok, v, a) => (!v || ok.video.includes(v)) && (!a || ok.audio.includes(a));
+
+const PREF = ["H.264", "VP9", "AV1", "H.265", "VP8"];
+const CODECS_FOR = { mp4: ["H.264", "H.265", "AV1", "VP9"], webm: ["VP8", "VP9", "AV1"], mkv: null };
+
 async function mediaView(token, inc, settings, headers) {
-  let dir = settings.downloadDir, dirTouched = false, info = null;
+  let dir = settings.downloadDir, dirTouched = false, info = null, adv = false, legacy = false;
+  let choices = [];
   const dirFor = (cat) => (settings.sortIntoCategories && cat !== "Other" ? `${settings.downloadDir}\\${cat}` : settings.downloadDir);
   view.innerHTML = `
     <div class="d-head"><span id="c-tile">${glyph("Video")}</span><div class="d-name"><input id="c-name" spellcheck="false" placeholder="Getting video details…"><div class="d-sub"><span class="st">${esc(host(inc.url))}</span></div></div></div>
     <div class="kv">
       <span class="k">Address</span><span class="v"><span title="${esc(inc.url)}">${esc(inc.url)}</span></span>
-      <span class="k">Quality</span><span class="v" id="c-q"><span class="spinner"></span><span class="muted">Getting video details…</span></span>
+      <span class="k" id="c-qk">Quality</span><span class="v" id="c-q"><span class="spinner"></span><span class="muted">Getting video details…</span></span>
+      <div class="adv" id="c-simple" hidden>
+        <span class="k">Type</span><span class="v"><select id="c-type"><option value="video">Video</option><option value="audio">Audio only</option></select></span>
+        <span class="k">Format</span><span class="v"><select id="c-fmt"></select></span>
+        <span class="k">Codec</span><span class="v"><select id="c-codec"></select></span>
+        <span class="k">Quality</span><span class="v"><select id="c-qs"></select></span>
+      </div>
+      <span class="v desc" id="c-desc"></span>
+      <div class="adv" id="c-adv" hidden>
+        <span class="k">Video</span><span class="v"><select id="c-v"></select></span>
+        <span class="k">Audio</span><span class="v"><select id="c-a"></select></span>
+        <span class="k">Container</span><span class="v"><select id="c-ct"><option value="mp4">MP4</option><option value="mkv">MKV</option><option value="webm">WebM</option></select></span>
+        <span class="v desc" id="c-warn"></span>
+      </div>
+      <span class="k" id="c-subk" hidden>Subtitles</span><span class="v" id="c-subv" hidden><select id="c-sub"></select><label class="chk" id="c-embedl"><input type="checkbox" id="c-embed"> Embed in video</label></span>
       <span class="k">Save to</span><span class="v"><span class="path" id="c-dir" title=""></span><button class="btn sm" id="c-browse">Change</button></span>
     </div>
-    <p class="muted note" id="c-first" hidden>Setting up video downloads. This happens once.</p>
+    <div id="c-tools"></div>
+    <p class="muted note" id="c-first" hidden>Reading the page. This can take a few seconds.</p>
     <div class="d-foot">
+      <button class="ghost-btn" id="c-more" hidden>${icon("chevDown")}All formats</button>
       <button class="btn" id="c-later" disabled>Download later</button>
       <span class="grow"></span>
       <button class="btn" id="c-cancel">Cancel</button>
@@ -174,25 +272,202 @@ async function mediaView(token, inc, settings, headers) {
     </div>`;
   const setDir = (d) => { dir = d; $("c-dir").textContent = d; $("c-dir").title = d; };
   setDir(dirFor("Video"));
-  const slow = setTimeout(() => { $("c-first").hidden = false; }, 4000);
-  const quality = () => info.qualities[Number($("c-qs").value) || 0];
-  const applyQuality = () => {
-    const q = quality(), cat = q.ext === "mp4" || q.ext === "webm" ? "Video" : "Music";
-    $("c-name").value = $("c-name").value.replace(/\.[a-z0-9]{2,4}$/i, "") + `.${q.ext}`;
-    $("c-tile").innerHTML = glyph(cat);
-    if (!dirTouched) setDir(dirFor(cat));
+  $("c-browse").onclick = async () => { const d = await invoke("pick_folder", { start: dir }); if (d) { setDir(d); dirTouched = true; } };
+  $("c-cancel").onclick = () => { invoke("forget_confirm", { token }); $("w-close").click(); };
+
+  const all = () => info.streams;
+  const videos = () => { const v = all().filter((s) => s.kind === "video"); return v.length ? v : all().filter((s) => s.kind === "both"); };
+  const audios = () => all().filter((s) => s.kind === "audio");
+  const allowed = (fmt, codec) => !CODECS_FOR[fmt] || CODECS_FOR[fmt].includes(codec);
+
+  // ---- the simple pickers: Type, Format, Codec, Quality ----
+  const setOptions = (sel, opts, keep) => {
+    const old = keep ? sel.value : null;
+    sel.innerHTML = opts.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+    if (old != null && opts.some(([v]) => v === old)) sel.value = old;
   };
+  const fillFormats = () => {
+    if ($("c-type").value === "audio") {
+      // M4A first: it plays everywhere.
+      const exts = [...new Set(audios().map((s) => s.ext))].sort((a, b) => (b === "m4a") - (a === "m4a"));
+      const name = { m4a: "M4A (AAC)", webm: "WebM (Opus)", mp3: "MP3", opus: "Opus", ogg: "Ogg" };
+      setOptions($("c-fmt"), exts.map((e) => [e, name[e] || e.toUpperCase()]), true);
+    } else {
+      setOptions($("c-fmt"), [["mp4", "MP4"], ["mkv", "MKV"], ["webm", "WebM"]], true);
+    }
+  };
+  const fillCodecs = () => {
+    const fmt = $("c-fmt").value;
+    if ($("c-type").value === "audio") {
+      const codecs = [...new Set(audios().filter((s) => s.ext === fmt).map((s) => s.audioCodec).filter(Boolean))];
+      setOptions($("c-codec"), codecs.map((c) => [c, c]), true);
+      $("c-codec").disabled = codecs.length <= 1;
+      return;
+    }
+    const codecs = [...new Set(videos().map((s) => s.videoCodec).filter((c) => c && allowed(fmt, c)))].sort((a, b) => PREF.indexOf(a) - PREF.indexOf(b));
+    setOptions($("c-codec"), [["auto", "Auto (best compatible)"], ...codecs.map((c) => [c, c])], true);
+    $("c-codec").disabled = false;
+  };
+  const fillQualities = () => {
+    const fmt = $("c-fmt").value, codec = $("c-codec").value;
+    const prevH = choices[Number($("c-qs").value)]?.height;
+    if ($("c-type").value === "audio") {
+      choices = audios().filter((s) => s.ext === fmt && (!codec || s.audioCodec === codec))
+        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))
+        .map((s) => ({ stream: s, label: `${s.bitrate ? Math.round(s.bitrate) + " kbps" : "Audio"}${s.sampleRate ? ` · ${+(s.sampleRate / 1000).toFixed(1)} kHz` : ""}${s.size ? ` · ${bytes(s.size)}` : ""}` }));
+    } else {
+      // One entry per height; the highest frame rate, then the preferred codec.
+      const byHeight = new Map();
+      for (const s of videos()) {
+        if (!s.height || !allowed(fmt, s.videoCodec) || (codec !== "auto" && s.videoCodec !== codec)) continue;
+        const cur = byHeight.get(s.height);
+        const rank = (x) => [-(x.fps || 0) > -30.5 ? 0 : -1, PREF.indexOf(x.videoCodec), -(x.bitrate || 0)];
+        const better = !cur || (() => { const a = rank(s), b = rank(cur); for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] < b[i]; return false; })();
+        if (better) byHeight.set(s.height, s);
+      }
+      choices = [...byHeight.entries()].sort((a, b) => b[0] - a[0]).map(([h, s]) => {
+        const a = s.kind === "both" ? null : audioFor(fmt);
+        const size = s.size ? s.size + (a?.size || 0) : null;
+        return { stream: s, height: h, label: `${h}p${fpsOf(s)}${size ? ` · ${bytes(size)}` : ""}` };
+      });
+    }
+    setOptions($("c-qs"), choices.map((c, i) => [String(i), c.label]));
+    // Keep the same height if there is one; else the best up to 1080p.
+    let i = choices.findIndex((c) => c.height && c.height === prevH);
+    if (i < 0) i = Math.max(0, choices.findIndex((c) => !c.height || c.height <= 1080));
+    $("c-qs").value = String(i);
+  };
+  // The audio that goes with a video in this container.
+  const audioFor = (fmt) => {
+    const as = audios();
+    if (fmt === "mp4") return best(as.filter((s) => s.ext === "m4a")) || best(as.filter((s) => s.audioCodec === "Opus")) || best(as);
+    if (fmt === "webm") return best(as.filter((s) => ["Opus", "Vorbis"].includes(s.audioCodec)));
+    return best(as);
+  };
+  const warnFor = (fmt, v, a) =>
+    fmt === "webm" && a && !fits(WEBM_OK, v.videoCodec, a.audioCodec) ? `WebM can't hold ${v.videoCodec} + ${a.audioCodec}. Choose MKV or another stream.` :
+      fmt === "webm" && !a ? "This video has no audio stream that fits WebM. Choose MP4 or MKV." :
+      fmt === "mp4" && (v.videoCodec === "VP9" || v.videoCodec === "AV1" || a?.audioCodec === "Opus") ? "MP4 with this codec may not play in every player. H.264 plays everywhere." : "";
+
+  const simplePick = () => {
+    if (legacy) { const q = info.qualities[Number($("c-qs").value) || 0]; return { format: q.format, ext: q.ext, size: q.size, v: null, a: null, ok: true }; }
+    const c = choices[Number($("c-qs").value) || 0];
+    if (!c) return { ok: false };
+    if ($("c-type").value === "audio") return { format: c.stream.id, ext: c.stream.ext, size: c.stream.size, v: null, a: c.stream, ok: true };
+    const fmt = $("c-fmt").value, v = c.stream, a = v.kind === "both" ? null : audioFor(fmt);
+    const warn = warnFor(fmt, v, a);
+    return { format: a ? `${v.id}+${a.id}` : v.id, ext: v.kind === "both" ? v.ext : fmt, size: v.size ? v.size + (a?.size || 0) : null, v, a, ok: !warn.includes("can't") && !warn.includes("no audio"), warn };
+  };
+
+  // ---- the manual picker: any video stream + any audio stream ----
+  const advPick = () => {
+    const v = videos().find((s) => s.id === $("c-v").value) || null;
+    const a = audios().find((s) => s.id === $("c-a").value) || null;
+    if (!v && !a) return { ok: false };
+    if (!v) return { format: a.id, ext: a.ext, size: a.size, v, a, ok: true };
+    if (v.kind === "both" || !a) return { format: v.id, ext: v.ext, size: v.size, v, a: null, ok: true };
+    const ext = $("c-ct").value, warn = warnFor(ext, v, a);
+    return { format: `${v.id}+${a.id}`, ext, size: (v.size || 0) + (a.size || 0) || null, v, a, ok: !warn.includes("can't"), warn };
+  };
+  const pick = () => (adv ? advPick() : simplePick());
+
+  // Subtitles: "file:en" saves a .srt beside the video, "embed:en" puts it inside.
+  const subs = () => {
+    const code = $("c-sub").value;
+    if (!code) return null;
+    const p = pick();
+    return `${$("c-embed").checked && p.v ? "embed" : "file"}:${code}`;
+  };
+  const refresh = () => {
+    const p = pick();
+    // Embedding needs a video container; an audio file gets a separate subtitle file.
+    $("c-embed").disabled = !p.v;
+    if (!p.v) $("c-embed").checked = false;
+    $("c-desc").textContent = adv ? "" : p.v || p.a ? describe(p.v, p.a) : "";
+    $("c-warn").textContent = adv ? (p.v || p.a ? describe(p.v, p.a) + (p.warn ? `\n${p.warn}` : "") : "Choose a video or an audio stream") : "";
+    if (!adv && p.warn) $("c-desc").textContent += `${$("c-desc").textContent ? "  ·  " : ""}${p.warn}`;
+    const bad = p.ok === false && !!(p.warn || (adv && !p.v && !p.a));
+    $("c-warn").classList.toggle("err", bad);
+    $("c-desc").classList.toggle("err", bad && !adv);
+    if (p.ok || p.ext) {
+      const cat = p.ext === "m4a" || p.ext === "opus" || (!p.v && p.a) ? "Music" : "Video";
+      if (p.ext) $("c-name").value = $("c-name").value.replace(/\.[a-z0-9]{2,4}$/i, "") + `.${p.ext}`;
+      $("c-tile").innerHTML = glyph(cat);
+      if (!dirTouched) setDir(dirFor(cat));
+    }
+    $("c-start").disabled = $("c-later").disabled = !p.ok;
+  };
+
+  // 1. Tools first, if they aren't there yet.
+  const status = await invoke("tools_status").catch(() => null);
+  if (status && (!status.ytdlp || !status.deno || (!status.ffmpeg && status.ffmpegDownloadable))) {
+    $("c-q").innerHTML = `<span class="muted">Waiting for the video tools</span>`;
+    await toolsPanel($("c-tools"), status);
+    $("c-tools").innerHTML = "";
+    $("c-q").innerHTML = `<span class="spinner"></span><span class="muted">Getting video details…</span>`;
+  }
+
+  // 2. Then the page.
+  const slow = setTimeout(() => { $("c-first").hidden = false; }, 3000);
   try {
     info = await invoke("probe_media", { url: inc.url, cookies: inc.cookies || null });
+    legacy = !info.streams.length;
     $("c-name").value = `${safeName(info.title)}.${info.qualities[0].ext}`;
-    $("c-q").innerHTML = `<select id="c-qs">${info.qualities.map((q, i) => `<option value="${i}">${esc(q.label)}${q.size ? ` · ${bytes(q.size)}` : ""}</option>`).join("")}</select>`;
-    // Default to the best quality up to 1080p: 4K files are huge, and
-    // they're one click away.
-    const preferred = info.qualities.findIndex((q) => /^\d+p/.test(q.label) && parseInt(q.label) <= 1080);
-    $("c-qs").value = String(Math.max(0, preferred));
-    $("c-qs").onchange = applyQuality;
-    applyQuality();
-    $("c-start").disabled = $("c-later").disabled = false;
+    $("c-qk").hidden = $("c-q").hidden = true;
+    $("c-simple").hidden = false;
+    if (legacy) {
+      // A site where yt-dlp gave no stream details: just the quality list.
+      for (const id of ["c-type", "c-fmt", "c-codec"]) { $(id).parentElement.hidden = true; $(id).parentElement.previousElementSibling.hidden = true; }
+      setOptions($("c-qs"), info.qualities.map((q, i) => [String(i), `${q.label}${q.size ? ` · ${bytes(q.size)}` : ""}`]));
+      const preferred = info.qualities.findIndex((q) => /^\d+p/.test(q.label) && parseInt(q.label) <= 1080);
+      $("c-qs").value = String(Math.max(0, preferred));
+    } else {
+      $("c-type").querySelector('[value="audio"]').hidden = !audios().length;
+      fillFormats(); fillCodecs(); fillQualities();
+      $("c-type").onchange = () => { fillFormats(); fillCodecs(); fillQualities(); refresh(); };
+      $("c-fmt").onchange = () => { fillCodecs(); fillQualities(); refresh(); };
+      $("c-codec").onchange = () => { fillQualities(); refresh(); };
+    }
+    $("c-qs").onchange = refresh;
+    if (info.subtitles?.length) {
+      const tag = (s) => `${s.name}${s.auto ? " (auto-generated)" : ""}`;
+      const manual = info.subtitles.filter((s) => !s.auto);
+      $("c-sub").innerHTML = `<option value="">None</option>` + info.subtitles.map((s) => `<option value="${esc(s.code)}">${esc(tag(s))}</option>`).join("") +
+        (manual.length > 1 ? `<option value="all,-live_chat">All languages (${manual.length})</option>` : "");
+      $("c-sub").onchange = refresh;
+      $("c-embed").onchange = refresh;
+      $("c-subk").hidden = $("c-subv").hidden = false;
+    }
+    $("c-v").innerHTML = `<option value="">None (audio only)</option>` + videos().map((s) => `<option value="${esc(s.id)}">${esc(vLabel(s))}</option>`).join("");
+    $("c-a").innerHTML = `<option value="">None</option>` + audios().map((s) => `<option value="${esc(s.id)}">${esc(aLabel(s))}</option>`).join("");
+    $("c-v").onchange = () => {
+      const v = videos().find((s) => s.id === $("c-v").value);
+      // A ready-made file carries its own sound; otherwise offer the best audio.
+      if (v && v.kind === "both") $("c-a").value = "";
+      else if (v && !$("c-a").value) $("c-a").value = (best(audios().filter((s) => s.ext === "m4a")) || best(audios()))?.id || "";
+      $("c-a").disabled = !!v && v.kind === "both";
+      refresh();
+    };
+    $("c-a").onchange = refresh;
+    $("c-ct").onchange = refresh;
+    $("c-more").hidden = legacy;
+    $("c-more").onclick = () => {
+      if (!adv) {
+        // Start from what the simple choice would download.
+        const p = simplePick();
+        $("c-v").value = p.v?.id || "";
+        $("c-a").value = p.a?.id || "";
+        $("c-a").disabled = !!p.v && p.v.kind === "both";
+        $("c-ct").value = ["mp4", "mkv", "webm"].includes(p.ext) ? p.ext : "mp4";
+      }
+      adv = !adv;
+      $("c-adv").hidden = !adv;
+      $("c-simple").querySelectorAll("select").forEach((s) => (s.disabled = adv));
+      if (!adv) fillCodecs();
+      $("c-more").innerHTML = `${icon(adv ? "chevUp" : "chevDown")}${adv ? "Fewer options" : "All formats"}`;
+      refresh();
+    };
+    refresh();
     $("c-start").focus();
   } catch (e) {
     $("c-name").value = "";
@@ -201,13 +476,12 @@ async function mediaView(token, inc, settings, headers) {
     clearTimeout(slow);
     $("c-first").hidden = true;
   }
-  $("c-browse").onclick = async () => { const d = await invoke("pick_folder", { start: dir }); if (d) { setDir(d); dirTouched = true; } };
-  $("c-cancel").onclick = () => { invoke("forget_confirm", { token }); $("w-close").click(); };
   const add = async (start) => {
     const filename = safeName($("c-name").value);
-    if (!filename || !info) return;
-    const q = quality();
-    const id = await invoke("add_download", { req: { url: inc.url, filename, dir, headers, start, window: win?.label, format: q.format, size: q.size ?? null } });
+    const p = info && pick();
+    if (!filename || !p?.ok) return;
+    const id = await addDownload({ url: inc.url, filename, dir, headers, start, window: win?.label, format: p.format, subtitles: subs(), size: p.size ?? null });
+    if (id == null) return;
     invoke("forget_confirm", { token });
     if (!start) { $("w-close").click(); return; }
     history.replaceState(null, "", `?id=${id}`);
@@ -224,7 +498,7 @@ async function torrentView(token, inc, settings, headers) {
   let dir = settings.downloadDir, info = null;
   const magnet = inc.url.startsWith("magnet:");
   view.innerHTML = `
-    <div class="d-head">${glyph("Compressed")}<div class="d-name"><input id="c-name" spellcheck="false" placeholder="${magnet ? "Asking peers for the details…" : "Reading the torrent…"}" readonly><div class="d-sub"><span class="st">${magnet ? "Magnet link" : "Torrent"}</span></div></div></div>
+    <div class="d-head">${glyph("Torrents")}<div class="d-name"><input id="c-name" spellcheck="false" placeholder="${magnet ? "Asking peers for the details…" : "Reading the torrent…"}" readonly><div class="d-sub"><span class="st">${magnet ? "Magnet link" : "Torrent"}</span></div></div></div>
     <div class="t-files" id="t-files"><div class="t-wait"><span class="spinner"></span><span class="muted">${magnet ? "Finding peers who share it. This can take a few seconds." : "Reading the file list…"}</span></div></div>
     <div class="kv">
       <span class="k">Selected</span><span class="v" id="t-sel">—</span>
@@ -268,7 +542,8 @@ async function torrentView(token, inc, settings, headers) {
     if (!sel.length) return;
     const files = sel.length === info.files.length ? [] : sel;
     const size = sel.reduce((a, i) => a + info.files[i].size, 0);
-    const id = await invoke("add_download", { req: { url: inc.url, filename: info.name, dir, headers, start, window: win?.label, size, torrentFiles: files } });
+    const id = await addDownload({ url: inc.url, filename: info.name, dir, headers, start, window: win?.label, size, torrentFiles: files });
+    if (id == null) return;
     invoke("forget_confirm", { token });
     if (!start) { $("w-close").click(); return; }
     history.replaceState(null, "", `?id=${id}`);
@@ -296,7 +571,7 @@ let layout = "";
 function render() {
   const it = current;
   if (!it) return;
-  const cat = it.category || catOf(it.filename);
+  const cat = Array.isArray(it.torrentFiles) ? "Torrents" : it.category || catOf(it.filename);
   const pct = it.size ? Math.min(100, (it.downloaded / it.size) * 100) : it.status === "completed" ? 100 : 0;
   const eta = it.speed > 0 && it.size ? (it.size - it.downloaded) / it.speed : Infinity;
 
@@ -376,7 +651,9 @@ function render() {
 
 function qualityLabel(format) {
   const h = /height=(\d+)/.exec(format || "");
-  return h ? `${h[1]}p` : /^ba/.test(format || "") ? "Audio only" : "Best available";
+  if (h) return `${h[1]}p`;
+  if (/^ba/.test(format || "")) return "Audio only";
+  return /^[\w-]+(\+[\w-]+)?$/.test(format || "") ? `Format ${format}` : "Best available";
 }
 
 view.addEventListener("click", async (e) => {
@@ -388,7 +665,7 @@ view.addEventListener("click", async (e) => {
     case "pause": invoke("pause", { ids: [id] }); break;
     case "resume": layout = ""; invoke("resume", { ids: [id] }); break;
     case "open": invoke("open_file", { id }); $("w-close").click(); break;
-    case "folder": invoke("open_folder", { id }); break;
+    case "folder": invoke("open_folder", { id }); $("w-close").click(); break;
     case "close": $("w-close").click(); break;
     case "cancel":
       // Ask twice instead of a second dialog: the button arms for 3 s.

@@ -1,4 +1,4 @@
-const DEFAULTS = { enabled: true, minSizeKB: 0, disabledSites: [] };
+const DEFAULTS = { enabled: true, minSizeKB: 0, disabledSites: [], capturePost: true };
 const $ = (id) => document.getElementById(id);
 const DL_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 20h14"/></svg>`;
 const CHECK = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5.5 12.5 4 4 9-9"/></svg>`;
@@ -20,12 +20,14 @@ async function main() {
   try { const u = new URL(tab.url); if (/^https?:$/.test(u.protocol)) host = u.hostname.replace(/^www\./, ""); } catch {}
 
   $("enabled").checked = settings.enabled;
+  $("capture-post").checked = settings.capturePost;
   $("min-size").value = String(settings.minSizeKB);
   $("site").textContent = host;
   $("site-row").hidden = !host;
   $("site-on").checked = !settings.disabledSites.includes(host);
 
   $("enabled").onchange = (e) => chrome.storage.sync.set({ enabled: e.target.checked });
+  $("capture-post").onchange = (e) => chrome.storage.sync.set({ capturePost: e.target.checked });
   $("min-size").onchange = (e) => chrome.storage.sync.set({ minSizeKB: Number(e.target.value) });
   $("site-on").onchange = () => chrome.runtime.sendMessage({ type: "toggle-site", tabId: tab.id, pageUrl: tab.url });
   $("open").onclick = () => chrome.runtime.sendMessage({ type: "show" }).then(() => window.close());

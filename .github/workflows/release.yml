@@ -1,23 +1,24 @@
-# Push a tag like v0.2.0 to build installers for every platform and attach
+# Push a tag like v0.2.0 to build portable copies for every platform and attach
 # them, plus the browser extension, to a draft GitHub release whose notes
 # come from CHANGELOG.md. Review the draft on GitHub, then publish it.
 # To rebuild an existing tag, run this workflow by hand and give the tag.
+# Every push to dev builds portable copies and installers into a public pre-release named
+# like "SwiftDL v0.3.1-dev1" (the number counts up per version); tagged
+# releases are drafts to review.
 name: Release
 
 on:
   push:
     tags: ["v*"]
+    branches: [dev]
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to build, e.g. v0.2.0
-        required: true
+        description: Existing tag to rebuild, e.g. v0.2.0. Leave empty on the dev branch to make a new dev build.
+        required: false
 
 permissions:
   contents: write
-
-env:
-  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   # One release for all builds, so parallel jobs don't race to create it.
@@ -25,10 +26,29 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       id: ${{ steps.release.outputs.id }}
+      tag: ${{ steps.tag.outputs.tag }}
+      dev: ${{ steps.tag.outputs.dev }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
+      - name: Work out the tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = branch ] && [ -z "${{ inputs.tag }}" ]; then
+            echo "dev=true" >> "$GITHUB_OUTPUT"
+            echo "DEV=1" >> "$GITHUB_ENV"
+            # A dev build: v<app version>-dev<n>, n one past the last such tag.
+            ver=$(jq -r .version app/src-tauri/tauri.conf.json)
+            n=$(gh release list --limit 200 --json tagName --jq "[.[] | select(.tagName | startswith(\"v$ver-dev\"))] | length")
+            tag="v$ver-dev$((n + 1))"
+          else
+            tag="${{ inputs.tag || github.ref_name }}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
       - name: Release notes from CHANGELOG.md
         run: |
           version="${TAG#v}"
@@ -39,20 +59,43 @@ jobs:
           ' CHANGELOG.md > notes.md
           cat >> notes.md <<'EOF'
 
-          ### Install
-          - **Windows:** `SwiftDL_*_x64-setup.exe` (no admin rights needed)
+          ### Install (portable)
+          Unzip anywhere and run it. Settings, downloads and tools stay in the `data` folder beside it.
+          - **Windows:** `SwiftDL_*_windows-x64-portable.zip`, run `SwiftDL.exe` (Windows on ARM: `SwiftDL_*_windows-arm64-portable.zip`)
+          - **macOS:** `SwiftDL_*_macos-universal-portable.zip`, open `SwiftDL.app` (right-click, Open the first time)
+          - **Linux:** `SwiftDL_*_linux-x64-portable.tar.gz`, run `./SwiftDL` (needs WebKitGTK 4.1)
+          - **Browser extension:** open SwiftDL, then Settings, Browser. `swiftdl-extension.zip` (Chromium browsers) and `swiftdl-firefox.xpi` (Firefox) have the same files.
+          EOF
+          cat >> notes.md <<'EOF'
+
+          ### Installers
+          - **Windows:** `SwiftDL_*_x64-setup.exe` (no admin rights needed) or `.msi`; Windows on ARM: `SwiftDL_*_arm64-setup.exe`
           - **macOS:** `SwiftDL_*_universal.dmg`
           - **Linux:** `.AppImage`, `.deb` or `.rpm`
-          - **Browser extension:** included with the app. Open SwiftDL and click *Add the extension* for a short guide (Chrome, Edge, Brave, Vivaldi and Firefox). `swiftdl-extension.zip` (Chromium browsers) and `swiftdl-firefox.xpi` (Firefox) have the same files.
           EOF
-      - name: Create draft release
+      - name: Create release
         id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Take the id from the create response; listing releases right
           # after creating one can miss the new draft.
-          id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases"             -f tag_name="$TAG" -f name="SwiftDL $TAG" -F draft=true -F body=@notes.md --jq .id)
+          # Tags are drafts to review; dev builds go out as pre-releases,
+          # tagged at the pushed commit.
+          if [ -n "$DEV" ]; then
+            # The notes are the commit message: summary, then description.
+            git log -1 --format=%B "$GITHUB_SHA" | cat - notes.md > notes.dev && mv notes.dev notes.md
+            create() { gh api -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" -f name="SwiftDL $TAG" -F draft=false -F prerelease=true -F body=@notes.md --jq .id; }
+          else
+            create() { gh api -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f name="SwiftDL $TAG" -F draft=true -F body=@notes.md --jq .id; }
+          fi
+          # GitHub's API sometimes answers 502/503 for a moment: try again.
+          id=""
+          for wait in 5 15 30 0; do
+            id=$(create) && break
+            echo "Creating the release failed; retrying in ${wait}s"
+            [ "$wait" -gt 0 ] && sleep "$wait"
+          done
           test -n "$id"
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
@@ -63,12 +106,30 @@ jobs:
       matrix:
         include:
           - platform: windows-latest
-            args: ""
+            label: windows-x64
+            build: --no-bundle
+            installer: ""
+          - platform: windows-11-arm
+            label: windows-arm64
+            build: --no-bundle
+            installer: ""
           - platform: macos-latest
-            args: "--target universal-apple-darwin"
+            label: macos-universal
+            build: --bundles app --target universal-apple-darwin
+            installer: --target universal-apple-darwin
           - platform: ubuntu-22.04
-            args: ""
+            label: linux-x64
+            build: --no-bundle
+            installer: ""
     runs-on: ${{ matrix.platform }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      TAG: ${{ needs.create-release.outputs.tag }}
+      # Compiled in, so the app knows which dev build it is (see updater.rs).
+      SWIFTDL_BUILD_TAG: ${{ needs.create-release.outputs.tag }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -90,14 +151,47 @@ jobs:
         with:
           node-version: 22
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: Build
+        working-directory: app/src-tauri
+        run: npx --yes @tauri-apps/cli@2 build ${{ matrix.build }}
+
+      # A portable copy is the program plus an empty "portable" file, which
+      # makes it keep everything in a data folder beside it.
+      - name: Package and attach
+        run: |
+          name="SwiftDL_${TAG}_${{ matrix.label }}-portable"
+          mkdir -p stage/SwiftDL
+          cp -r extension stage/SwiftDL/extension
+          cp -r app/src-tauri/gen/extension-firefox stage/SwiftDL/extension-firefox
+          touch stage/SwiftDL/portable
+          case "$RUNNER_OS" in
+            Windows)
+              cp target/release/swiftdl-app.exe stage/SwiftDL/SwiftDL.exe
+              if command -v 7z >/dev/null; then (cd stage && 7z a -tzip "../$name.zip" SwiftDL)
+              else powershell -NoProfile -Command "Compress-Archive -Path stage/SwiftDL -DestinationPath $name.zip"; fi
+              file="$name.zip" ;;
+            Linux)
+              cp target/release/swiftdl-app stage/SwiftDL/SwiftDL
+              (cd stage && tar czf "../$name.tar.gz" SwiftDL)
+              file="$name.tar.gz" ;;
+            macOS)
+              cp -R target/universal-apple-darwin/release/bundle/macos/SwiftDL.app stage/SwiftDL/
+              (cd stage && ditto -c -k --keepParent SwiftDL "../$name.zip")
+              file="$name.zip" ;;
+          esac
+          gh release upload "$TAG" "$file" --clobber
+
+      # Installers (.exe/.msi, .dmg, .AppImage/.deb/.rpm) for every build,
+      # dev builds included, next to the portable copies above.
+      - name: Installers
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: app/src-tauri
           tauriScript: npx --yes @tauri-apps/cli@2
           releaseId: ${{ needs.create-release.outputs.id }}
-          args: ${{ matrix.args }}
+          args: ${{ matrix.installer }}
 
   extension:
     needs: create-release
@@ -109,14 +203,37 @@ jobs:
       - name: Zip and attach the extension
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.create-release.outputs.tag }}
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
         run: |
           (cd extension && zip -r ../swiftdl-extension.zip .)
           # The Firefox add-on: the same files with Firefox's manifest
           # (keep in step with app/src-tauri/build.rs).
           cp -r extension firefox
           jq 'del(.key) | .background = {scripts: ["background.js"]}
-              | .browser_specific_settings = {gecko: {id: "swiftdl@harshhh.me", strict_min_version: "140.0",
+              | .browser_specific_settings = {gecko: {id: "swiftdl@sailhighsea", strict_min_version: "140.0",
                   data_collection_permissions: {required: ["none"]}}}' \
             extension/manifest.json > firefox/manifest.json
+          # Mozilla signs each version once, so a dev build (v0.3.0-dev2)
+          # becomes version 0.3.0.2.
+          case "$TAG" in
+            *-dev*) jq --arg v "$(jq -r .version extension/manifest.json).${TAG##*-dev}" '.version = $v'                       firefox/manifest.json > firefox/m.json && mv firefox/m.json firefox/manifest.json ;;
+          esac
           (cd firefox && zip -r ../swiftdl-firefox.xpi .)
+          # Sign it with Mozilla (unlisted channel) when AMO API keys are set,
+          # so release Firefox accepts it. Without them the unsigned file is
+          # attached as before.
+          if [ -n "$AMO_JWT_ISSUER" ] && [ -n "$AMO_JWT_SECRET" ]; then
+            if npx --yes web-ext@8 sign --source-dir firefox --artifacts-dir signed \
+              --channel unlisted --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET"; then
+              cp signed/*.xpi swiftdl-firefox.xpi
+            else
+              # A tagged release must be signed; a dev build goes out unsigned.
+              case "$TAG" in
+                *-dev*) echo "::warning::Mozilla signing failed; attaching the unsigned Firefox add-on" ;;
+                *) exit 1 ;;
+              esac
+            fi
+          fi
           gh release upload "$TAG" swiftdl-extension.zip swiftdl-firefox.xpi --clobber

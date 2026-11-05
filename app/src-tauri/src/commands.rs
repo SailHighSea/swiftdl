@@ -35,7 +35,14 @@ pub fn get_state(m: Mgr) -> AppState {
 }
 
 #[tauri::command]
-pub async fn probe_url(m: Mgr<'_>, url: String, headers: Vec<(String, String)>) -> Result<ProbeInfo, String> {
+pub async fn probe_url(m: Mgr<'_>, url: String, headers: Vec<(String, String)>, filename: Option<String>) -> Result<ProbeInfo, String> {
+    // A POST download is never probed (a second request could be refused):
+    // the name the browser saw is all we know until it starts.
+    if crate::manager::post_body(&headers).is_some() {
+        let filename = filename.filter(|f| !f.trim().is_empty()).unwrap_or_else(|| "download.bin".into());
+        let category = category_for(&filename).to_string();
+        return Ok(ProbeInfo { dir: m.default_dir(&category), filename, size: None, resumable: false, category });
+    }
     let remote = swiftdl_engine::probe(m.client(), url.trim(), &to_header_map(&headers)).await.map_err(|e| format!("{e:#}"))?;
     let category = category_for(&remote.filename).to_string();
     Ok(ProbeInfo {
@@ -54,13 +61,54 @@ pub fn default_dir(m: Mgr, filename: String) -> PathBuf {
 
 #[tauri::command]
 pub fn add_download(m: Mgr, req: AddRequest) -> Result<u64, String> {
-    if !req.url.starts_with("http://") && !req.url.starts_with("https://") {
-        return Err("Only http:// and https:// links are supported".into());
+    check_add(&req)?;
+    Ok(m.add(req))
+}
+
+/// What a download may come from: web links, and for torrents also magnet
+/// links and .torrent files on this computer.
+fn check_add(req: &AddRequest) -> Result<(), String> {
+    let url = req.url.trim();
+    let web = url.starts_with("http://") || url.starts_with("https://");
+    let torrent = req.torrent_files.is_some() && (url.starts_with("magnet:") || std::path::Path::new(url).is_file());
+    if !web && !torrent {
+        return Err("Only web links, magnet links and .torrent files are supported".into());
     }
     if req.filename.trim().is_empty() {
         return Err("File name is empty".into());
     }
-    Ok(m.add(req))
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req(url: &str, torrent: bool) -> AddRequest {
+        serde_json::from_value(serde_json::json!({
+            "url": url, "filename": "name", "dir": "C:/Downloads", "start": true,
+            "torrentFiles": if torrent { serde_json::json!([]) } else { serde_json::Value::Null },
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn accepts_every_kind_of_source() {
+        assert!(check_add(&req("https://example.com/a.iso", false)).is_ok());
+        assert!(check_add(&req("magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c", true)).is_ok());
+        assert!(check_add(&req("https://example.com/a.torrent", true)).is_ok());
+        let file = std::env::temp_dir().join("swiftdl-test.torrent");
+        std::fs::write(&file, b"d4:infod4:name1:aee").unwrap();
+        assert!(check_add(&req(&file.to_string_lossy(), true)).is_ok(), "a .torrent file on disk");
+        let _ = std::fs::remove_file(file);
+    }
+
+    #[test]
+    fn refuses_other_sources() {
+        assert!(check_add(&req("magnet:?xt=urn:btih:abc", false)).is_err(), "magnet only as a torrent");
+        assert!(check_add(&req("file:///etc/passwd", false)).is_err());
+        assert!(check_add(&req("C:/not/there.torrent", true)).is_err());
+    }
 }
 
 #[tauri::command]
@@ -138,8 +186,29 @@ pub fn show_main(m: Mgr) {
     crate::show_main_window(m.app_handle());
 }
 
+/// Newer release on GitHub for the chosen channel, if there is one.
 #[tauri::command]
-pub fn integration_status() -> crate::browser::IntegrationStatus {
+pub async fn check_update(m: Mgr<'_>, include_dev: bool) -> Result<Option<crate::updater::UpdateInfo>, String> {
+    crate::updater::check(m.client(), include_dev).await.map_err(|e| {
+        crate::applog::info(format!("update check failed: {e:#}"));
+        format!("{e:#}")
+    })
+}
+
+#[tauri::command]
+pub fn open_log_folder(m: Mgr) -> Result<(), String> {
+    let dir = crate::applog::dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    m.app_handle().opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn app_info() -> serde_json::Value {
+    serde_json::json!({ "tag": crate::updater::current_tag(), "repo": crate::updater::REPO, "logFile": crate::applog::file() })
+}
+
+#[tauri::command]
+pub fn integration_status()-> crate::browser::IntegrationStatus {
     crate::browser::status()
 }
 
@@ -183,5 +252,21 @@ pub async fn probe_media(m: Mgr<'_>, url: String, cookies: Option<String>) -> Re
 /// "New download" window, like a link caught from the browser.
 #[tauri::command]
 pub fn open_new_download(m: Mgr, url: String) {
-    m.new_download_window(Incoming { url: url.trim().to_string(), filename: None, referrer: None, cookies: None, user_agent: None });
+    m.new_download_window(Incoming { url: url.trim().to_string(), filename: None, referrer: None, cookies: None, user_agent: None, method: None, body: None, content_type: None });
+}
+
+#[tauri::command]
+pub fn tools_status() -> crate::media::ToolsStatus {
+    crate::media::tools_status()
+}
+
+#[tauri::command]
+pub async fn install_tools(m: Mgr<'_>) -> Result<(), String> {
+    crate::media::install_tools(m.client()).await.map_err(|e| format!("{e:#}"))
+}
+
+/// What the tool download is doing, or `None` when idle.
+#[tauri::command]
+pub fn tools_note() -> Option<String> {
+    crate::media::SETUP_NOTE.lock().unwrap().clone()
 }

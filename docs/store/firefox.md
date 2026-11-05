@@ -3,7 +3,7 @@
 Everything the submission form on addons.mozilla.org asks for, ready to
 paste. Keep it up to date when the add-on changes.
 
-**Add-on ID:** `swiftdl@harshhh.me` (fixed; set by `app/src-tauri/build.rs`)
+**Add-on ID:** `swiftdl@sailhighsea` (fixed; set by `app/src-tauri/build.rs`)
 **Upload:** `swiftdl-firefox.xpi` from a release, or build it locally (the
 installer build writes `app/src-tauri/gen/extension-firefox/`; zip its
 contents).
@@ -35,7 +35,7 @@ What the add-on does:
 
 - Sends downloads you start in Firefox to SwiftDL, with the site's cookies, so
   downloads behind a login keep working.
-- Adds a Download video button to video players. On YouTube and other video
+- Adds a Download video button to video players. On video
   sites, pick a quality in SwiftDL, from 4K to audio only.
 - Sends magnet links and .torrent files to SwiftDL's built-in torrent client.
 - Hold Alt while clicking a link to let Firefox download it instead, or turn

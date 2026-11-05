@@ -1,6 +1,8 @@
 // Release builds are GUI apps: no console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod applog;
+mod autostart;
 mod browser;
 mod commands;
 mod manager;
@@ -8,6 +10,7 @@ mod media;
 mod native_host;
 mod settings;
 mod torrent;
+mod updater;
 mod windows;
 
 use manager::DownloadManager;
@@ -57,6 +60,12 @@ fn main() {
         native_host::run();
         return;
     }
+    applog::install_panic_hook();
+    // A portable copy keeps the web view's data beside it too.
+    if let Some(dir) = browser::portable_dir() {
+        // SAFETY: nothing else is running yet.
+        unsafe { std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", dir.join("data").join("webview")) };
+    }
 
     tauri::Builder::default()
         // Must be first: a second launch (e.g. from the extension) hands its
@@ -72,30 +81,41 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .setup(move |app| {
-            let data_dir = app.path().app_data_dir()?;
+            let data_dir = browser::data_dir();
             let downloads = app.path().download_dir().unwrap_or_else(|_| data_dir.join("Downloads"));
             let mgr = DownloadManager::new(app.handle().clone(), data_dir.clone(), downloads)?;
+            applog::set_verbose(mgr.settings().debug_log);
             if let Err(e) = browser::register(&data_dir) {
-                eprintln!("browser integration not registered: {e:#}");
+                applog::error(format!("browser integration not registered: {e:#}"));
             }
             if let Err(e) = torrent::register_handlers() {
-                eprintln!("magnet and .torrent handlers not registered: {e:#}");
+                applog::error(format!("magnet and .torrent handlers not registered: {e:#}"));
             }
             if let Err(e) = browser::offer_extension(mgr.settings().offer_extension) {
-                eprintln!("could not offer the browser extension: {e:#}");
+                applog::error(format!("could not offer the browser extension: {e:#}"));
+            }
+            // Keep the sign-in entry pointing at this copy (it moves on update).
+            if mgr.settings().start_with_system {
+                let _ = autostart::set(true);
             }
             app.manage(mgr.clone());
             if let Some(main) = app.get_webview_window("main") {
                 windows::polish(&main);
             }
-            if let Err(e) = build_tray(app.handle()) {
-                eprintln!("tray icon not available: {e:#}");
-            }
+            let tray_ok = match build_tray(app.handle()) {
+                Ok(()) => true,
+                Err(e) => {
+                    applog::error(format!("tray icon not available: {e:#}"));
+                    false
+                }
+            };
             mgr.start_ticker();
             // Launched by the browser extension: show only the small
-            // download window, like IDM. Otherwise open the main window.
+            // download window, like IDM. Started at sign-in: stay in the
+            // tray. Otherwise open the main window.
             match native_host::parse_add_arg(&args).or_else(|| torrent::parse_open_arg(&args)) {
                 Some(inc) => mgr.incoming(inc),
+                None if tray_ok && args.iter().any(|a| a == autostart::HIDDEN_ARG) => {}
                 None => show_main_window(app.handle()),
             }
             Ok(())
@@ -104,6 +124,9 @@ fn main() {
             commands::get_state,
             commands::probe_url,
             commands::probe_media,
+            commands::tools_status,
+            commands::install_tools,
+            commands::tools_note,
             commands::is_media_url,
             commands::is_torrent_url,
             commands::probe_torrent,
@@ -126,6 +149,9 @@ fn main() {
             commands::confirm_info,
             commands::forget_confirm,
             commands::show_main,
+            commands::check_update,
+            commands::open_log_folder,
+            commands::app_info,
         ])
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
@@ -153,7 +179,7 @@ fn main() {
                     };
                     if let (Some(link), Some(mgr)) = (link, _app.try_state::<Arc<DownloadManager>>()) {
                         if torrent::is_torrent(&link, None) {
-                            mgr.incoming(manager::Incoming { url: link, filename: None, referrer: None, cookies: None, user_agent: None });
+                            mgr.incoming(manager::Incoming { url: link, filename: None, referrer: None, cookies: None, user_agent: None, method: None, body: None, content_type: None });
                         }
                     }
                 }

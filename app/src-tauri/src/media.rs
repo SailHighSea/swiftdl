@@ -1,6 +1,6 @@
-//! Video sites (YouTube and others), through yt-dlp.
+//! Video sites, through yt-dlp.
 //!
-//! These sites don't serve a plain file. YouTube's player streams through a
+//! These sites don't serve a plain file. Their players stream through a
 //! private protocol with no download address, so SwiftDL hands these pages
 //! to yt-dlp, which keeps up with such changes, and to ffmpeg, which joins
 //! the separate video and audio streams. Both are fetched into the app's
@@ -74,11 +74,72 @@ fn ffmpeg_dir() -> Option<PathBuf> {
         .find(|d| d.join(FFMPEG_EXE).is_file())
 }
 
+const DENO_EXE: &str = if cfg!(windows) { "deno.exe" } else { "deno" };
+
+/// Some sites hide their stream addresses behind a script that yt-dlp needs a
+/// JavaScript runtime to solve; it looks for deno.
+fn deno_asset() -> &'static str {
+    if cfg!(windows) {
+        "deno-x86_64-pc-windows-msvc.zip"
+    } else if cfg!(target_os = "macos") {
+        if cfg!(target_arch = "aarch64") { "deno-aarch64-apple-darwin.zip" } else { "deno-x86_64-apple-darwin.zip" }
+    } else if cfg!(target_arch = "aarch64") {
+        "deno-aarch64-unknown-linux-gnu.zip"
+    } else {
+        "deno-x86_64-unknown-linux-gnu.zip"
+    }
+}
+
 static TOOLS: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 struct Tools {
     ytdlp: PathBuf,
     ffmpeg: Option<PathBuf>,
+    deno: Option<PathBuf>,
+}
+
+impl Tools {
+    /// Tells yt-dlp where to find the JavaScript runtime.
+    fn js_runtime(&self, cmd: &mut Command) {
+        if let Some(deno) = &self.deno {
+            cmd.arg("--js-runtimes").arg(format!("deno:{}", deno.display()));
+        }
+    }
+}
+
+/// What "Download tools" is doing right now, for the progress bar.
+pub static SETUP_NOTE: LazyLock<Note> = LazyLock::new(Note::default);
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolsStatus {
+    /// Where the tools are (or will be) saved.
+    pub dir: PathBuf,
+    pub ytdlp: bool,
+    pub deno: bool,
+    pub ffmpeg: bool,
+    /// ffmpeg can only be downloaded for Windows; elsewhere it comes from the system.
+    pub ffmpeg_downloadable: bool,
+    pub portable: bool,
+}
+
+pub fn tools_status() -> ToolsStatus {
+    ToolsStatus {
+        dir: tools_dir(),
+        ytdlp: ytdlp_path().exists(),
+        deno: tools_dir().join(DENO_EXE).exists(),
+        ffmpeg: ffmpeg_dir().is_some(),
+        ffmpeg_downloadable: cfg!(windows),
+        portable: crate::browser::portable_dir().is_some(),
+    }
+}
+
+/// Downloads everything video downloads need, showing progress in `SETUP_NOTE`.
+pub async fn install_tools(client: &Client) -> Result<()> {
+    let note = SETUP_NOTE.clone();
+    let result = ensure_tools(client, &note, true).await.map(|_| ());
+    *note.lock().unwrap() = None;
+    result
 }
 
 /// Downloads yt-dlp (and ffmpeg on Windows) if they're missing.
@@ -107,8 +168,20 @@ async fn ensure_tools(client: &Client, note: &Note, need_ffmpeg: bool) -> Result
         let _ = std::fs::remove_file(&zip);
         unpacked.context("couldn't unpack ffmpeg")?;
     }
+    // Without deno some sites may still work, so don't fail the
+    // download over it.
+    let deno = tools_dir().join(DENO_EXE);
+    if !deno.exists() {
+        let zip = tools_dir().join("deno.zip");
+        let url = format!("https://github.com/denoland/deno/releases/latest/download/{}", deno_asset());
+        let got = fetch(client, &url, &zip, note, "Getting deno").await;
+        if got.is_ok() {
+            let _ = unpack_deno(&zip, &deno);
+        }
+        let _ = std::fs::remove_file(&zip);
+    }
     *note.lock().unwrap() = None;
-    Ok(Tools { ytdlp, ffmpeg: ffmpeg_dir() })
+    Ok(Tools { ytdlp, ffmpeg: ffmpeg_dir(), deno: deno.exists().then_some(deno) })
 }
 
 /// Streams `url` to `dest` (via a temp file), showing progress in `note`.
@@ -154,6 +227,27 @@ fn unpack_ffmpeg(zip: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Copies the deno program out of the archive.
+fn unpack_deno(zip: &Path, dest: &Path) -> Result<()> {
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(zip)?)?;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        if entry.name()?.rsplit('/').next() != Some(DENO_EXE) {
+            continue;
+        }
+        let mut buf = vec![];
+        entry.read_to_end(&mut buf)?;
+        std::fs::write(dest, buf)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o755))?;
+        }
+        return Ok(());
+    }
+    bail!("deno wasn't in the archive");
+}
+
 fn stamp_path() -> PathBuf {
     tools_dir().join("yt-dlp.checked")
 }
@@ -162,7 +256,7 @@ fn stamp_update() {
     let _ = std::fs::write(stamp_path(), b"");
 }
 
-/// YouTube changes often and yt-dlp follows; check for a new yt-dlp once a day.
+/// Sites change often and yt-dlp follows; check for a new yt-dlp once a day.
 fn update_in_background(ytdlp: &Path) {
     let fresh = std::fs::metadata(stamp_path())
         .and_then(|m| m.modified())
@@ -210,6 +304,128 @@ pub struct MediaInfo {
     pub site: String,
     pub duration: Option<f64>,
     pub qualities: Vec<Quality>,
+    /// Every video and audio stream the site offers, for picking by hand.
+    pub streams: Vec<Stream>,
+    pub subtitles: Vec<Subtitle>,
+}
+
+/// A subtitle language the site offers.
+#[derive(Serialize)]
+pub struct Subtitle {
+    /// What yt-dlp's `--sub-langs` takes.
+    pub code: String,
+    pub name: String,
+    /// Made by speech recognition rather than a person.
+    pub auto: bool,
+}
+
+fn subtitles(info: &Value) -> Vec<Subtitle> {
+    let name_of = |tracks: &Value, code: &str| tracks.as_array().and_then(|t| t.first()).and_then(|t| t["name"].as_str()).unwrap_or(code).to_string();
+    let mut out: Vec<Subtitle> = info["subtitles"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        // Live chat is listed as a "subtitle" on streams.
+        .filter(|(code, _)| *code != "live_chat")
+        .map(|(code, tracks)| Subtitle { code: code.clone(), name: name_of(tracks, code), auto: false })
+        .collect();
+    // Automatic captions come translated into every language; keep only the
+    // spoken one, which yt-dlp marks "-orig".
+    out.extend(info["automatic_captions"].as_object().into_iter().flatten().filter(|(code, _)| code.ends_with("-orig")).map(|(code, tracks)| {
+        let name = name_of(tracks, code).trim_end_matches(" (Original)").to_string();
+        Subtitle { code: code.clone(), name, auto: true }
+    }));
+    out
+}
+
+/// One format yt-dlp found, described for the "all formats" picker.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Stream {
+    pub id: String,
+    /// "video" (picture only), "audio", or "both" (a ready-made file).
+    pub kind: &'static str,
+    pub ext: String,
+    pub video_codec: Option<String>,
+    pub audio_codec: Option<String>,
+    pub width: Option<u64>,
+    pub height: Option<u64>,
+    pub fps: Option<f64>,
+    /// Total bitrate in kbit/s.
+    pub bitrate: Option<f64>,
+    pub sample_rate: Option<u64>,
+    pub size: Option<u64>,
+    pub note: String,
+}
+
+/// "avc1.64002a" -> "H.264", "mp4a.40.2" -> "AAC".
+fn codec_name(raw: &str) -> String {
+    let r = raw.to_ascii_lowercase();
+    let name = if r.starts_with("avc") {
+        "H.264"
+    } else if r.starts_with("vp09") || r.starts_with("vp9") {
+        "VP9"
+    } else if r.starts_with("vp8") {
+        "VP8"
+    } else if r.starts_with("av01") || r.starts_with("av1") {
+        "AV1"
+    } else if r.starts_with("hev") || r.starts_with("hvc") {
+        "H.265"
+    } else if r.starts_with("mp4a") || r == "aac" {
+        "AAC"
+    } else if r.starts_with("opus") {
+        "Opus"
+    } else if r.starts_with("vorbis") {
+        "Vorbis"
+    } else if r.starts_with("ec-3") || r.starts_with("eac3") {
+        "E-AC-3"
+    } else if r.starts_with("ac-3") {
+        "AC-3"
+    } else if r.starts_with("mp3") || r.starts_with("mp4a.6b") {
+        "MP3"
+    } else {
+        return raw.split('.').next().unwrap_or(raw).to_string();
+    };
+    name.to_string()
+}
+
+fn streams(info: &Value) -> Vec<Stream> {
+    let formats = info["formats"].as_array().cloned().unwrap_or_default();
+    let codec = |f: &Value, key: &str| f[key].as_str().filter(|c| *c != "none").map(codec_name);
+    let mut out: Vec<Stream> = formats
+        .iter()
+        .filter(|f| f["ext"].as_str() != Some("mhtml") && f["format_id"].is_string())
+        .filter_map(|f| {
+            let (v, a) = (codec(f, "vcodec"), codec(f, "acodec"));
+            let kind = match (&v, &a) {
+                (Some(_), Some(_)) => "both",
+                (Some(_), None) => "video",
+                (None, Some(_)) => "audio",
+                // yt-dlp leaves the codec out for some sites; trust the sizes.
+                (None, None) if f["height"].as_u64().unwrap_or(0) > 0 => "both",
+                _ => return None,
+            };
+            Some(Stream {
+                id: f["format_id"].as_str()?.to_string(),
+                kind,
+                ext: f["ext"].as_str().unwrap_or("").to_string(),
+                video_codec: v,
+                audio_codec: a,
+                width: f["width"].as_u64(),
+                height: f["height"].as_u64(),
+                fps: f["fps"].as_f64(),
+                bitrate: f["tbr"].as_f64(),
+                sample_rate: f["asr"].as_u64(),
+                size: size_of(f),
+                note: f["format_note"].as_str().unwrap_or("").to_string(),
+            })
+        })
+        .collect();
+    // Tallest first, then the highest bitrate.
+    out.sort_by(|a, b| {
+        b.height.unwrap_or(0).cmp(&a.height.unwrap_or(0)).then(b.bitrate.unwrap_or(0.0).total_cmp(&a.bitrate.unwrap_or(0.0)))
+    });
+    out
 }
 
 /// Asks yt-dlp what the page offers, as a short list of qualities.
@@ -220,6 +436,7 @@ pub async fn probe(client: &Client, url: &str, cookies: Option<String>) -> Resul
     let out = tauri::async_runtime::spawn_blocking(move || {
         let mut cmd = command(&tools.ytdlp);
         cmd.args(["-J", "--no-playlist", "--no-warnings"]);
+        tools.js_runtime(&mut cmd);
         if let Some(c) = cookies.filter(|c| !c.is_empty()) {
             cmd.arg("--add-headers").arg(format!("Cookie:{c}"));
         }
@@ -235,6 +452,8 @@ pub async fn probe(client: &Client, url: &str, cookies: Option<String>) -> Resul
         site: info["extractor_key"].as_str().unwrap_or("").to_string(),
         duration: info["duration"].as_f64(),
         qualities: qualities(&info),
+        streams: streams(&info),
+        subtitles: subtitles(&info),
     })
 }
 
@@ -266,7 +485,7 @@ fn qualities(info: &Value) -> Vec<Quality> {
             Quality {
                 label: if fps > 30.5 { format!("{h}p{}", fps.round()) } else { format!("{h}p") },
                 // H.264 + AAC first: it plays everywhere. AV1/VP9 only
-                // where YouTube has nothing else (1440p and 4K).
+                // where a site has nothing else (1440p and 4K).
                 format: format!(
                     "bv*[height={h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height={h}]+ba[ext=m4a]/bv*[height={h}]+ba/b[height={h}]/bv*[height<={h}]+ba/b"
                 ),
@@ -299,6 +518,8 @@ fn last_error(stderr: &str) -> Option<String> {
 pub struct Job {
     pub url: String,
     pub format: String,
+    /// "file:en,fr" or "embed:en" (see `Item::subtitles`).
+    pub subs: Option<String>,
     pub dest: PathBuf,
     pub cookies: Option<String>,
 }
@@ -308,8 +529,10 @@ pub struct Job {
 /// again continues where it left off.
 pub async fn run(client: &Client, job: Job, progress: Arc<Progress>, note: Note, cancel: CancellationToken) -> Result<Outcome> {
     let merges = job.format.contains('+');
-    let tools = ensure_tools(client, &note, merges).await?;
-    if merges && tools.ffmpeg.is_none() {
+    let subs = job.subs.as_deref().and_then(|s| s.split_once(':')).map(|(m, l)| (m == "embed", l.to_string()));
+    let embeds = subs.as_ref().is_some_and(|(embed, _)| *embed);
+    let tools = ensure_tools(client, &note, merges || embeds).await?;
+    if (merges || embeds) && tools.ffmpeg.is_none() {
         bail!("Joining video and audio needs ffmpeg. Install it (brew install ffmpeg, or sudo apt install ffmpeg) and try again.");
     }
     if cancel.is_cancelled() {
@@ -324,10 +547,26 @@ pub async fn run(client: &Client, job: Job, progress: Arc<Progress>, note: Note,
     cmd.args(["-f", &job.format, "--no-playlist", "--newline", "--no-colors", "--no-mtime", "-N", "4"])
         .args(["--progress-template", "download:SDL|%(progress.status)s|%(progress.downloaded_bytes)s|%(progress.total_bytes)s|%(progress.total_bytes_estimate)s"]);
     if merges {
-        cmd.args(["--merge-output-format", "mp4"]);
+        // The container follows the file name the user chose (mp4, mkv, webm).
+        let ext = job.dest.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+        let container = ext.filter(|e| matches!(e.as_str(), "mp4" | "mkv" | "webm")).unwrap_or_else(|| "mp4".into());
+        cmd.args(["--merge-output-format", &container]);
     }
     if let Some(dir) = &tools.ffmpeg {
         cmd.arg("--ffmpeg-location").arg(dir);
+    }
+    tools.js_runtime(&mut cmd);
+    if let Some((embed, langs)) = &subs {
+        cmd.args(["--write-subs", "--sub-langs", langs]);
+        // "en-orig" is a site's own speech recognition, not a human track.
+        if langs.contains("-orig") {
+            cmd.arg("--write-auto-subs");
+        }
+        if *embed {
+            cmd.arg("--embed-subs");
+        } else if tools.ffmpeg.is_some() {
+            cmd.args(["--convert-subs", "srt"]);
+        }
     }
     if let Some(c) = job.cookies.as_ref().filter(|c| !c.is_empty()) {
         cmd.arg("--add-headers").arg(format!("Cookie:{c}"));

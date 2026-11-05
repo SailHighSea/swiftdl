@@ -14,7 +14,7 @@
   let settings = {
     downloadDir: "C:\\Users\\you\\Downloads", connections: 8, maxConcurrent: 3, speedLimitKib: 0,
     sortIntoCategories: true, askBeforeDownload: true, notifyOnComplete: true,
-    offerExtension: true, onboardingDismissed: false, showProgressWindow: true, closeToTray: true, theme: "system", seedUntil: "stop",
+    offerExtension: true, onboardingDismissed: false, showProgressWindow: true, closeToTray: true, theme: "system", seedUntil: "stop", startWithSystem: false, autoUpdateCheck: true, includeDevBuilds: false, debugLog: false,
   };
   if (VIDEO) Object.assign(settings, { downloadDir: "C:\\Users\\Harsh\\Downloads", onboardingDismissed: true });
   const catFor = (name) => {
@@ -181,8 +181,26 @@
       return { title: "Big Buck Bunny 60fps 4K - Official Blender Foundation Short Film", site: "Youtube", duration: 634, qualities: [
         { label: "2160p60", format: "bv*[height=2160]+ba", ext: "mp4", size: 1.9 * GB }, { label: "1440p60", format: "bv*[height=1440]+ba", ext: "mp4", size: 980 * MB },
         { label: "1080p60", format: "bv*[height=1080]+ba", ext: "mp4", size: 412 * MB }, { label: "720p60", format: "bv*[height=720]+ba", ext: "mp4", size: 198 * MB },
-        { label: "Audio only", format: "ba[ext=m4a]/ba", ext: "m4a", size: 9.8 * MB }] };
+        { label: "Audio only", format: "ba[ext=m4a]/ba", ext: "m4a", size: 9.8 * MB }],
+      subtitles: [{ code: "en", name: "English", auto: false }, { code: "es", name: "Spanish", auto: false }, { code: "ko", name: "Korean", auto: false }, { code: "en-orig", name: "English", auto: true }],
+      streams: [
+        { id: "401", kind: "video", ext: "mp4", videoCodec: "AV1", width: 3840, height: 2160, fps: 60, bitrate: 11200, size: 1.9 * GB, note: "2160p60" },
+        { id: "313", kind: "video", ext: "webm", videoCodec: "VP9", width: 3840, height: 2160, fps: 60, bitrate: 14100, size: 2.2 * GB, note: "2160p60" },
+        { id: "137", kind: "video", ext: "mp4", videoCodec: "H.264", width: 1920, height: 1080, fps: 60, bitrate: 4300, size: 412 * MB, note: "1080p60" },
+        { id: "248", kind: "video", ext: "webm", videoCodec: "VP9", width: 1920, height: 1080, fps: 60, bitrate: 2400, size: 260 * MB, note: "1080p60" },
+        { id: "18", kind: "both", ext: "mp4", videoCodec: "H.264", audioCodec: "AAC", width: 640, height: 360, fps: 30, bitrate: 600, size: 54 * MB, note: "360p" },
+        { id: "251", kind: "audio", ext: "webm", audioCodec: "Opus", bitrate: 130, sampleRate: 48000, size: 10.2 * MB },
+        { id: "140", kind: "audio", ext: "m4a", audioCodec: "AAC", bitrate: 129, sampleRate: 44100, size: 9.8 * MB }] };
     },
+    tools_status: () => ({ dir: "C:\\Users\\you\\AppData\\Roaming\\com.swiftdl.app\\tools", ytdlp: !location.search.includes("tools"), deno: !location.search.includes("tools"), ffmpeg: !location.search.includes("tools"), ffmpegDownloadable: true, portable: false }),
+    install_tools: async () => { for (let i = 1; i <= 10; i++) { window.__toolsNote = `Getting deno · ${i * 10}%`; await new Promise((r) => setTimeout(r, 250)); } window.__toolsNote = null; },
+    tools_note: () => window.__toolsNote || null,
+    check_update: async ({ includeDev }) => {
+      await new Promise((r) => setTimeout(r, 500));
+      return location.search.includes("update") ? { tag: includeDev ? "v0.4.0-dev1" : "v0.4.0", url: "https://github.com/SailHighSea/swiftdl/releases", prerelease: !!includeDev } : null;
+    },
+    open_log_folder: () => {},
+    app_info: () => ({ tag: "v0.3.1", repo: "SailHighSea/swiftdl", logFile: "C:\\Users\\you\\AppData\\Roaming\\com.swiftdl.app\\logs\\swiftdl.log" }),
   };
 
   window.__TAURI__ = {
