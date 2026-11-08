@@ -266,6 +266,19 @@ pub async fn install_tools(m: Mgr<'_>) -> Result<(), String> {
     crate::media::install_tools(m.client()).await.map_err(|e| format!("{e:#}"))
 }
 
+#[tauri::command]
+pub async fn check_tools_update(m: Mgr<'_>) -> Result<Vec<crate::media::ToolUpdate>, String> {
+    crate::media::check_tools_update(m.client()).await.map_err(|e| {
+        crate::applog::info(format!("tools update check failed: {e:#}"));
+        format!("{e:#}")
+    })
+}
+
+#[tauri::command]
+pub async fn update_tools(m: Mgr<'_>) -> Result<(), String> {
+    crate::media::update_tools(m.client()).await.map_err(|e| format!("{e:#}"))
+}
+
 /// What the tool download is doing, or `None` when idle.
 #[tauri::command]
 pub fn tools_note() -> Option<String> {

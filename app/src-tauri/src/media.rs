@@ -142,6 +142,93 @@ pub async fn install_tools(client: &Client) -> Result<()> {
     result
 }
 
+/// A tool that has a newer release than the copy SwiftDL downloaded.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolUpdate {
+    pub name: String,
+    pub current: String,
+    pub latest: String,
+}
+
+fn local_version(program: PathBuf, deno: bool) -> Option<String> {
+    let out = command(&program).arg("--version").output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let line = text.lines().next()?.trim();
+    // yt-dlp prints "2025.01.15"; deno prints "deno 2.1.4 (stable, ...)".
+    let v = if deno { line.split_whitespace().nth(1)? } else { line };
+    Some(v.trim_start_matches('v').to_string())
+}
+
+async fn latest_release(client: &Client, repo: &str) -> Result<String> {
+    let res = client
+        .get(format!("https://api.github.com/repos/{repo}/releases/latest"))
+        .header("User-Agent", format!("SwiftDL/{}", env!("CARGO_PKG_VERSION")))
+        .header("Accept", "application/vnd.github+json")
+        .timeout(Duration::from_secs(20))
+        .send()
+        .await
+        .context("couldn't reach GitHub")?;
+    if !res.status().is_success() {
+        bail!("GitHub answered {}", res.status());
+    }
+    let v: Value = serde_json::from_slice(&res.bytes().await?).context("unexpected answer from GitHub")?;
+    let tag = v["tag_name"].as_str().ok_or_else(|| anyhow!("no release found for {repo}"))?;
+    Ok(tag.trim_start_matches('v').to_string())
+}
+
+/// yt-dlp and deno that are installed here but behind their newest release.
+/// (ffmpeg's builds have no useful version number, so it isn't checked.)
+pub async fn check_tools_update(client: &Client) -> Result<Vec<ToolUpdate>> {
+    let mut out = vec![];
+    for (name, repo, path, is_deno) in [
+        ("yt-dlp", "yt-dlp/yt-dlp", ytdlp_path(), false),
+        ("deno", "denoland/deno", tools_dir().join(DENO_EXE), true),
+    ] {
+        if !path.exists() {
+            continue;
+        }
+        let Some(current) = tokio::task::spawn_blocking(move || local_version(path, is_deno)).await? else { continue };
+        let latest = latest_release(client, repo).await?;
+        if latest != current {
+            out.push(ToolUpdate { name: name.into(), current, latest });
+        }
+    }
+    Ok(out)
+}
+
+/// Downloads the newest yt-dlp and deno over the installed ones, showing progress in `SETUP_NOTE`.
+pub async fn update_tools(client: &Client) -> Result<()> {
+    let outdated = check_tools_update(client).await?;
+    let note = SETUP_NOTE.clone();
+    let _guard = TOOLS.lock().await;
+    let result: Result<()> = async {
+        for t in &outdated {
+            if t.name == "yt-dlp" {
+                let url = format!("https://github.com/yt-dlp/yt-dlp/releases/latest/download/{}", ytdlp_asset());
+                fetch(client, &url, &ytdlp_path(), &note, "Updating yt-dlp").await.context("couldn't update yt-dlp")?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(ytdlp_path(), std::fs::Permissions::from_mode(0o755))?;
+                }
+                stamp_update();
+            } else {
+                let zip = tools_dir().join("deno.zip");
+                let url = format!("https://github.com/denoland/deno/releases/latest/download/{}", deno_asset());
+                let got = fetch(client, &url, &zip, &note, "Updating deno").await;
+                let unpacked = got.and_then(|_| unpack_deno(&zip, &tools_dir().join(DENO_EXE)));
+                let _ = std::fs::remove_file(&zip);
+                unpacked.context("couldn't update deno")?;
+            }
+        }
+        Ok(())
+    }
+    .await;
+    *note.lock().unwrap() = None;
+    result
+}
+
 /// Downloads yt-dlp (and ffmpeg on Windows) if they're missing.
 async fn ensure_tools(client: &Client, note: &Note, need_ffmpeg: bool) -> Result<Tools> {
     let _guard = TOOLS.lock().await;

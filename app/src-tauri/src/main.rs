@@ -127,6 +127,8 @@ fn main() {
             commands::tools_status,
             commands::install_tools,
             commands::tools_note,
+            commands::check_tools_update,
+            commands::update_tools,
             commands::is_media_url,
             commands::is_torrent_url,
             commands::probe_torrent,

@@ -119,6 +119,7 @@ button.t-pr:hover { background: var(--btn-bg); color: var(--text); }
 .tools b { font-weight: 600; }
 .tools p { margin: 6px 0 0; line-height: 1.45; }
 .tools .path-inline { color: var(--text); word-break: break-all; user-select: text; }
+.tools-btns { display: flex; flex-wrap: wrap; gap: 8px; }
 .tools-bar { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .tools-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .tools .err { color: var(--red); font-size: 12px; }

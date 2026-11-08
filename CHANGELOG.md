@@ -13,6 +13,11 @@ uses [Semantic Versioning](https://semver.org/).
   page's video, not an "up next" video linked near the player.
 
 ### Added
+- Video tools (yt-dlp, deno) are checked for newer releases along with app
+  updates; a notice appears when one is available, and Settings has "Check for
+  tool updates" and "Update tools" buttons.
+- A welcome screen on first run (installer and portable) to pick a theme and
+  download the video tools.
 - Select several downloads with Shift+click (range), Ctrl+click (toggle),
   Shift+arrows or Ctrl+A, then pause, resume, copy links or remove them together.
 - An icon button to clear completed downloads from the list.

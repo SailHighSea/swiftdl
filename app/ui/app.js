@@ -126,7 +126,7 @@ const STATUS = { downloading: "Downloading", queued: "Queued", paused: "Paused",
 const HISTORY = 120;
 const LIMITS = [0, 256, 1024, 5120, 10240];
 const state = {
-  items: [], settings: null, view: "all", search: "", selected: null, sel: new Set(), anchor: null, pending: [], update: null,
+  toolUpdates: [], items: [], settings: null, view: "all", search: "", selected: null, sel: new Set(), anchor: null, pending: [], update: null,
   speedHist: new Map(), totalHist: [], typesOpen: true,
 };
 const VIEWS = {
@@ -945,26 +945,63 @@ async function loadTools() {
   const t = await call("tools_status").catch(() => null);
   if (!t) return;
   const have = [["yt-dlp", t.ytdlp], ["deno", t.deno], ["ffmpeg", t.ffmpeg]].map(([n, ok]) => `${n}: ${ok ? "ready" : "missing"}`).join(" - ");
-  $("set-tools-info").textContent = `${have}. Saved to ${t.dir}${t.portable ? " (portable)" : ""}`;
+  const upd = state.toolUpdates.length ? ` Update available: ${state.toolUpdates.map((u) => `${u.name} ${u.current} → ${u.latest}`).join(", ")}.` : "";
+  $("set-tools-info").textContent = `${have}. Saved to ${t.dir}${t.portable ? " (portable)" : ""}.${upd}`;
   const missing = !t.ytdlp || !t.deno || (!t.ffmpeg && t.ffmpegDownloadable);
   $("set-tools-go").hidden = !missing;
   $("set-tools-go").disabled = false;
+  $("set-tools-update").hidden = !state.toolUpdates.length;
+  $("set-tools-update").disabled = false;
+  $("set-tools-check").hidden = !t.ytdlp && !t.deno;
 }
-$("set-tools-go").onclick = async () => {
-  const bar = $("set-tools-bar"), go = $("set-tools-go");
-  go.disabled = true; bar.hidden = false;
+// Runs a tools command while showing its progress in a bar.
+async function runToolsJob(command, bar, noteEl, buttons) {
+  buttons.forEach((b) => (b.disabled = true));
+  bar.hidden = false;
   const poll = setInterval(async () => {
     const note = await call("tools_note").catch(() => null);
     if (!note) return;
-    $("set-tools-note").textContent = note;
+    noteEl.textContent = note;
     const pct = /(\d+)%/.exec(note);
     bar.querySelector("i").style.width = pct ? `${pct[1]}%` : "100%";
   }, 250);
-  try { await call("install_tools"); toast("Video tools are ready"); }
-  catch (e) { toast(String(e)); }
+  let ok = false;
+  try { await call(command); ok = true; }
+  catch (e) { toast(esc(String(e)), "err"); }
   clearInterval(poll);
   bar.hidden = true;
+  buttons.forEach((b) => (b.disabled = false));
+  return ok;
+}
+$("set-tools-go").onclick = async () => {
+  if (await runToolsJob("install_tools", $("set-tools-bar"), $("set-tools-note"), [$("set-tools-go"), $("set-tools-update")])) toast("Video tools are ready", "ok");
   loadTools();
+};
+$("set-tools-update").onclick = async () => {
+  if (await runToolsJob("update_tools", $("set-tools-bar"), $("set-tools-note"), [$("set-tools-go"), $("set-tools-update")])) {
+    state.toolUpdates = [];
+    toast("Video tools are up to date", "ok");
+  }
+  loadTools();
+};
+// yt-dlp and deno are checked against their newest releases. `manual` also reports "up to date" and errors.
+async function checkToolsUpdate(manual = false) {
+  try {
+    const list = await invoke("check_tools_update");
+    const isNew = list.some((u) => !state.toolUpdates.some((o) => o.name === u.name && o.latest === u.latest));
+    state.toolUpdates = list;
+    if (isNew) toast(`<span class="t-body"><b>Tool update available</b><small>${esc(list.map((u) => `${u.name} ${u.latest}`).join(", "))}. Click to update</small></span>`, "dl", { sticky: true, onClick: () => openSettings("general") });
+    if (manual && !list.length) toast("Video tools are up to date", "ok");
+  } catch (e) {
+    if (manual) toast(esc(String(e)), "err");
+  }
+  if ($("dlg-settings").open) loadTools();
+}
+$("set-tools-check").onclick = async () => {
+  const b = $("set-tools-check");
+  b.disabled = true; b.textContent = "Checking…";
+  await checkToolsUpdate(true);
+  b.disabled = false; b.textContent = "Check for tool updates";
 };
 function renderLimits() {
   $("set-limits").innerHTML = LIMITS.map((k) => `<button type="button" data-k="${k}" class="${k === setLimitKib ? "on" : ""}">${k ? bytes(k * 1024) + "/s" : "Off"}</button>`).join("");
@@ -1007,12 +1044,45 @@ $("form-settings").addEventListener("submit", async (e) => {
     includeDevBuilds: $("set-devchannel").checked,
     debugLog: $("set-debuglog").checked,
     onboardingDismissed: state.settings.onboardingDismissed,
+    welcomeDone: state.settings.welcomeDone,
     theme: setThemeChoice,
     seedUntil: setSeed,
   });
   $("dlg-settings").close();
   toast("Settings saved", "ok");
 });
+
+// ---------- welcome (first run) ----------
+function renderWelcomeTheme() {
+  $("welcome-theme").querySelectorAll("[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === (state.settings.theme || "system")));
+}
+$("welcome-theme").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-v]");
+  if (!b) return;
+  window.setTheme(b.dataset.v);
+  await saveSettings({ ...state.settings, theme: b.dataset.v });
+  renderWelcomeTheme();
+});
+$("welcome-tools-go").onclick = async () => {
+  const go = $("welcome-tools-go");
+  if (await runToolsJob("install_tools", $("welcome-tools-bar"), $("welcome-tools-note"), [go])) {
+    $("welcome-tools-info").textContent = "Video tools are ready.";
+    go.hidden = true;
+  }
+};
+// Escape counts as "Get started" too.
+$("dlg-welcome").addEventListener("close", () => saveSettings({ ...state.settings, welcomeDone: true }));
+async function maybeWelcome() {
+  if (state.settings.welcomeDone) return;
+  const t = await call("tools_status").catch(() => null);
+  // People updating from an older version who already have everything set up don't need it.
+  if (t && t.ytdlp && t.deno && (t.ffmpeg || !t.ffmpegDownloadable)) {
+    await saveSettings({ ...state.settings, welcomeDone: true });
+    return;
+  }
+  renderWelcomeTheme();
+  $("dlg-welcome").showModal();
+}
 
 // ---------- updates ----------
 // Looks at GitHub's releases; the card and button open the release page,
@@ -1054,7 +1124,7 @@ $("open-logs").onclick = () => call("open_log_folder");
 $("set-devchannel").addEventListener("change", () => { state.update = null; renderUpdateStatus(); });
 // A few seconds after start, then every six hours while it's running.
 function scheduleUpdateChecks() {
-  const auto = () => { if (state.settings.autoUpdateCheck) checkForUpdate(false); };
+  const auto = () => { if (state.settings.autoUpdateCheck) { checkForUpdate(false); checkToolsUpdate(false); } };
   setTimeout(auto, 5000);
   setInterval(auto, 6 * 3600 * 1000);
 }
@@ -1091,6 +1161,7 @@ async function boot() {
   scheduleUpdateChecks();
   ingest(s.items);
   nextPending();
+  maybeWelcome();
   loadIntegration();
   setInterval(loadIntegration, 15000);
   await listen("downloads", (e) => ingest(e.payload));

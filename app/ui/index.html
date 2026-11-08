@@ -138,7 +138,9 @@
           <div class="set-group">
             <div class="set-row col"><div class="sr-text"><b>Video tools</b><span id="set-tools-info">Checking...</span></div>
               <div class="tools-bar" id="set-tools-bar" hidden><div class="p-bar"><i></i></div><span class="muted" id="set-tools-note"></span></div>
-              <div><button type="button" class="btn sm" id="set-tools-go" hidden>Download tools</button></div></div>
+              <div class="tools-btns"><button type="button" class="btn sm" id="set-tools-go" hidden>Download tools</button>
+                <button type="button" class="btn sm primary" id="set-tools-update" hidden>Update tools</button>
+                <button type="button" class="btn sm" id="set-tools-check">Check for tool updates</button></div></div>
           </div>
         </section>
         <section data-panel="speed" hidden>
@@ -188,6 +190,22 @@
           <button type="button" class="btn" id="set-cancel">Cancel</button>
           <button type="submit" class="btn primary">Save</button>
         </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- First run -->
+  <dialog id="dlg-welcome" class="modal guide">
+    <form method="dialog">
+      <h3>Welcome to SwiftDL</h3>
+      <p class="muted">Two quick things before you start. You can change both later in Settings.</p>
+      <div class="set-row col"><div class="sr-text"><b>Choose a look</b><span>System follows your computer's light or dark setting.</span></div>
+        <div class="seg theme-seg" id="welcome-theme"><button type="button" data-v="system">System</button><button type="button" data-v="light">Light</button><button type="button" data-v="dark">Dark</button><button type="button" data-v="flat98">Flat 98</button><button type="button" data-v="win98">Win98</button><button type="button" data-v="system7">Mac System 7</button><button type="button" data-v="platinum">Mac Platinum</button><button type="button" data-v="cde">Linux CDE</button><button type="button" data-v="gnome2">Linux GNOME 2</button></div></div>
+      <div class="set-row col"><div class="sr-text"><b>Video tools</b><span id="welcome-tools-info">yt-dlp, deno and ffmpeg let SwiftDL download from YouTube and other video sites. They are saved next to SwiftDL's data.</span></div>
+        <div class="tools-bar" id="welcome-tools-bar" hidden><div class="p-bar"><i></i></div><span class="muted" id="welcome-tools-note"></span></div>
+        <div><button type="button" class="btn sm primary" id="welcome-tools-go">Download tools</button></div></div>
+      <div class="confirm-foot">
+        <button value="close" class="btn primary" id="welcome-done">Get started</button>
       </div>
     </form>
   </dialog>
