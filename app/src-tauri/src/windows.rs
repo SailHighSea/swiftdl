@@ -51,25 +51,35 @@ fn bring_to_front(w: &WebviewWindow) {
 
 /// Opens `download.html?{query}` in a window called `label`, or brings an
 /// existing one forward.
+///
+/// The window is built on its own thread. Building one on the main thread,
+/// which is where synchronous commands run, deadlocks WebView2 on Windows:
+/// pasting a YouTube link froze the whole app (#4).
 pub fn open(app: &AppHandle, label: &str, query: &str, title: &str) -> tauri::Result<()> {
     if let Some(w) = app.get_webview_window(label) {
         bring_to_front(&w);
         return Ok(());
     }
-    // Transparent and frameless: the page draws the whole window (rounded
-    // card and shadow), so no native frame, border or unpainted edge shows.
-    WebviewWindowBuilder::new(app, label, WebviewUrl::App(format!("download.html?{query}").into()))
-        .title(title)
-        .inner_size(WINDOW_WIDTH, 360.0)
-        .resizable(false)
-        .maximizable(false)
-        .decorations(false)
-        .transparent(true)
-        .shadow(false)
-        .center()
-        .focused(true)
-        .always_on_top(true)
-        .build()
-        .map(|w| bring_to_front(&w))?;
+    let (app, label, query, title) = (app.clone(), label.to_string(), query.to_string(), title.to_string());
+    std::thread::spawn(move || {
+        // Transparent and frameless: the page draws the whole window (rounded
+        // card and shadow), so no native frame, border or unpainted edge shows.
+        let built = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(format!("download.html?{query}").into()))
+            .title(&title)
+            .inner_size(WINDOW_WIDTH, 360.0)
+            .resizable(false)
+            .maximizable(false)
+            .decorations(false)
+            .transparent(true)
+            .shadow(false)
+            .center()
+            .focused(true)
+            .always_on_top(true)
+            .build();
+        match built {
+            Ok(w) => bring_to_front(&w),
+            Err(e) => crate::applog::line(&format!("could not open window {label}: {e:#}")),
+        }
+    });
     Ok(())
 }

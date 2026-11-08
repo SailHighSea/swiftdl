@@ -32,6 +32,9 @@ pub const STORE_UPDATE_URL: &str = "https://clients2.google.com/service/update2/
 /// instead of offering store buttons that would lead nowhere.
 pub const STORE_PUBLISHED: bool = false;
 
+/// The add-on's listing on Firefox Add-ons (live since 0.3.0).
+pub const FIREFOX_STORE_URL: &str = "https://addons.mozilla.org/firefox/addon/swiftdl-integration/";
+
 pub fn store_url() -> String {
     format!("https://chromewebstore.google.com/detail/{}", EXTENSION_IDS[0])
 }
@@ -153,16 +156,41 @@ pub fn register(data_dir: &Path) -> Result<()> {
 
     #[cfg(not(windows))]
     {
-        for b in BROWSERS {
-            let base = home().join(b.config_dir);
-            if base.is_dir() {
-                let dir = base.join("NativeMessagingHosts");
-                std::fs::create_dir_all(&dir)?;
-                std::fs::write(dir.join(format!("{HOST_NAME}.json")), &body)?;
-            }
+        let mut bases: Vec<PathBuf> = BROWSERS.iter().map(|b| home().join(b.config_dir)).filter(|p| p.is_dir()).collect();
+        // Forks (Helium, Thorium, ungoogled-chromium, Opera, …) keep their
+        // profile under their own folder name, so find them by shape.
+        for p in chromium_profile_dirs(&home()) {
+            if !bases.contains(&p) { bases.push(p); }
+        }
+        for base in bases {
+            let dir = base.join("NativeMessagingHosts");
+            std::fs::create_dir_all(&dir)?;
+            std::fs::write(dir.join(format!("{HOST_NAME}.json")), &body)?;
         }
     }
     register_firefox(data_dir, &exe)
+}
+
+/// Chromium-family profile folders under the user's config root, one or two
+/// levels down (`~/.config/net.imput.helium`, `~/.config/BraveSoftware/Brave-Browser`).
+/// A Chromium profile root holds a `Local State` file.
+#[cfg_attr(windows, allow(dead_code))]
+fn chromium_profile_dirs(home: &Path) -> Vec<PathBuf> {
+    #[cfg(target_os = "macos")]
+    let root = home.join("Library/Application Support");
+    #[cfg(not(target_os = "macos"))]
+    let root = home.join(".config");
+    let mut out = Vec::new();
+    let subdirs = |p: &Path| -> Vec<PathBuf> {
+        std::fs::read_dir(p).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect()
+    };
+    for a in subdirs(&root) {
+        if a.join("Local State").is_file() { out.push(a); continue; }
+        for b in subdirs(&a) {
+            if b.join("Local State").is_file() { out.push(b); }
+        }
+    }
+    out
 }
 
 /// Firefox keeps its own native messaging registration, naming the add-on
@@ -384,7 +412,8 @@ pub fn status() -> IntegrationStatus {
     }
 }
 
-/// Opens the extension's store page in a specific browser.
+/// Opens the extension's store page in a specific browser: Firefox Add-ons
+/// for Firefox, the Chrome Web Store for the rest.
 pub fn open_store_in(app: &AppHandle, browser: &str) -> Result<()> {
     use tauri_plugin_opener::OpenerExt;
     let exe = browser_exe(browser).ok_or_else(|| anyhow::anyhow!("{browser} isn't installed"))?;
@@ -392,7 +421,27 @@ pub fn open_store_in(app: &AppHandle, browser: &str) -> Result<()> {
     let with = exe.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     #[cfg(not(target_os = "macos"))]
     let with = exe.to_string_lossy().into_owned();
-    app.opener().open_url(store_url(), Some(with))?;
+    let url = if browser == "firefox" { FIREFOX_STORE_URL.to_string() } else { store_url() };
+    app.opener().open_url(url, Some(with))?;
+    Ok(())
+}
+
+/// Starts a browser at its own extensions page, for "Load unpacked". Browsers
+/// refuse to open internal pages from a link, but take them as a launch
+/// argument.
+pub fn open_extensions_page(browser: &str) -> Result<()> {
+    let exe = browser_exe(browser).ok_or_else(|| anyhow::anyhow!("{browser} isn't installed"))?;
+    let page = match browser {
+        "edge" => "edge://extensions",
+        "brave" => "brave://extensions",
+        "vivaldi" => "vivaldi://extensions",
+        "firefox" => "about:debugging#/runtime/this-firefox",
+        _ => "chrome://extensions",
+    };
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open").arg("-a").arg(&exe).arg("--args").arg(page).spawn()?;
+    #[cfg(not(target_os = "macos"))]
+    std::process::Command::new(&exe).arg(page).spawn()?;
     Ok(())
 }
 
@@ -409,4 +458,27 @@ pub fn bundled_extension_dir(app: &AppHandle) -> Option<PathBuf> {
     // Dev builds: use the repo's copy.
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../extension");
     dev.join("manifest.json").exists().then(|| dev.canonicalize().unwrap_or(dev))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_chromium_forks_by_shape() {
+        let home = std::env::temp_dir().join(format!("swiftdl-forks-{}", std::process::id()));
+        #[cfg(target_os = "macos")]
+        let root = home.join("Library/Application Support");
+        #[cfg(not(target_os = "macos"))]
+        let root = home.join(".config");
+        for d in ["net.imput.helium", "BraveSoftware/Brave-Browser", "not-a-browser"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        std::fs::write(root.join("net.imput.helium/Local State"), "{}").unwrap();
+        std::fs::write(root.join("BraveSoftware/Brave-Browser/Local State"), "{}").unwrap();
+        let mut found = chromium_profile_dirs(&home);
+        found.sort();
+        std::fs::remove_dir_all(&home).ok();
+        assert_eq!(found, vec![root.join("BraveSoftware/Brave-Browser"), root.join("net.imput.helium")]);
+    }
 }

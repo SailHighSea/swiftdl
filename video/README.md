@@ -9,7 +9,7 @@ YouTube download and the app.
   YouTube video page in Chrome at 2x (into `out/pages/`, not committed, since
   they're other people's pages).
 - **SwiftDL's real UI.** The download windows and the main window are the app's
-  own pages (`app/ui`), running in the preview's video mode (`?video`): the
+  own pages (`app/dist`, so run `npm run build` in `app/` first), running in the preview's video mode (`?video`): the
   film clicks their real buttons and feeds each download's progress frame by
   frame.
 

@@ -1,79 +1,32 @@
-// SwiftDL UI. Talks to the Rust backend through Tauri's invoke/listen;
-// opened in a normal browser, mock.js stands in for the backend.
+// SwiftDL main window. Talks to the Rust backend through api.ts; opened
+// in a normal browser, mock.ts stands in for the backend.
 
-const { invoke } = window.__TAURI__.core;
-const { listen } = window.__TAURI__.event;
-const appWindow = window.__TAURI__.window?.getCurrentWindow?.();
+import "./styles.css";
+import "./themes.css";
+import { invoke, listen, currentWindow, $ } from "./api";
+import type { Item, Settings, IntegrationStatus, BrowserStatus, Incoming, ProbeInfo, Header, Status, Commands, UpdateInfo } from "./api";
+import { icon, CATS, parts, bytes, speed, dur, when, esc, host, segBar } from "./util";
 
-// ---------- icons (1.6px strokes) ----------
-const P = {
-  search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
-  compose: '<path d="M12 4H6.5A2.5 2.5 0 0 0 4 6.5v11A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5V12"/><path d="M17.6 3.6a2 2 0 0 1 2.8 2.8L12.5 14.3 9 15l.7-3.5z"/>',
-  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
-  download: '<path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 20h14"/>',
-  pause: '<path d="M9 6v12M15 6v12"/>',
-  play: '<path d="M8 5.5v13l10.5-6.5z"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>',
-  globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5a13 13 0 0 1 0 17M12 3.5a13 13 0 0 0 0 17"/>',
-  chevron: '<path d="m9.5 6 6 6-6 6"/>',
-  chevDown: '<path d="m6 9.5 6 6 6-6"/>',
-  x: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
-  folder: '<path d="M3.5 7.5A2 2 0 0 1 5.5 5.5H9l2 2h7.5a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>',
-  open: '<path d="M14 4.5h5.5V10M19.5 4.5 11 13M18 14v4a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 5 18V8a1.5 1.5 0 0 1 1.5-1.5h4"/>',
-  copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/>',
-  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
-  retry: '<path d="M4.5 12a7.5 7.5 0 0 1 13.2-4.8L19.5 9M19.5 4.5V9H15M19.5 12a7.5 7.5 0 0 1-13.2 4.8L4.5 15M4.5 19.5V15H9"/>',
-  trash: '<path d="M4.5 7h15M10 11v6M14 11v6M6.5 7l.8 11.2A2 2 0 0 0 9.3 20h5.4a2 2 0 0 0 2-1.8L17.5 7M9.5 7V5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v2"/>',
-  more: '<circle cx="6" cy="12" r="1.1"/><circle cx="12" cy="12" r="1.1"/><circle cx="18" cy="12" r="1.1"/>',
-  gauge: '<path d="m12 14 3.5-3.5"/><path d="M4 18a8.5 8.5 0 1 1 16 0"/>',
-  sliders: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
-  info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/>',
-  clipboard: '<rect x="6" y="4.5" width="12" height="16" rx="2"/><path d="M9.5 4.5h5v2.5h-5z"/>',
-  check: '<path d="m5.5 12.5 4 4 9-9"/>',
-  inbox: '<path d="M4 13.5 6.5 6h11l2.5 7.5V18a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18z"/><path d="M4 13.5h4.5l1 2h5l1-2H20"/>',
-  arrowDown: '<path d="M12 5v14M6.5 13.5 12 19l5.5-5.5"/>',
-  doneCircle: '<circle cx="12" cy="12" r="8.5"/><path d="m8.5 12 2.5 2.5 4.5-5"/>',
-  alert: '<circle cx="12" cy="12" r="8.5"/><path d="M12 8v5M12 16h.01"/>',
-  bolt: '<path d="M13 3.5 5.5 13.5H11l-1 7 7.5-10H12z"/>',
-  hash: '<path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16"/>',
-  keyboard: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/>',
-  video: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M7.5 4.5v15M16.5 4.5v15M3.5 9.5h4M3.5 14.5h4M16.5 9.5h4M16.5 14.5h4"/>',
-  music: '<path d="M9 17.5V6.3l10-1.8v11"/><circle cx="6.5" cy="17.5" r="2.5"/><circle cx="16.5" cy="15.5" r="2.5"/>',
-  app: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M3.5 9h17"/><path d="M6.6 6.8h.01M9 6.8h.01" stroke-width="2.2"/>',
-  archive: '<path d="M12 3.3 20 7.4v9.2l-8 4.1-8-4.1V7.4z"/><path d="m4 7.4 8 4.1 8-4.1M12 11.5v9.2M8 5.3l8 4.1"/>',
-  doc: '<path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5M9 12.5h6M9 16h6"/>',
-  image: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.7"/><path d="m20.5 15.5-4.5-4.5-9.5 8.5"/>',
-  file: '<path d="M14 3.5H7.5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V8z"/><path d="M14 3.5V8h4.5"/>',
-  magnet: '<path d="M6 4v8a6 6 0 0 0 12 0V4h-4v8a2 2 0 0 1-4 0V4z"/><path d="M6 8h4M14 8h4"/>',
-  clearList: '<path d="M4 7h11M4 12h7M4 17h11"/><path d="m15.5 12.5 5 5M20.5 12.5l-5 5"/>',
-};
-const icon = (n) => `<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${P[n] || P.file}</svg>`;
-const hydrate = () => document.querySelectorAll("i[data-icon]").forEach((el) => {
+const appWindow = currentWindow();
+const target = (e: Event) => e.target as HTMLElement;
+
+const hydrate = () => document.querySelectorAll<HTMLElement>("i[data-icon]").forEach((el) => {
   const tpl = document.createElement("template");
-  tpl.innerHTML = icon(el.dataset.icon);
-  const svg = tpl.content.firstElementChild;
+  tpl.innerHTML = icon(el.dataset.icon || "file");
+  const svg = tpl.content.firstElementChild as SVGElement;
   if (el.className) svg.classList.add(...el.className.split(" "));
   el.replaceWith(svg);
 });
 
-const CATS = {
-  Video: { color: "#8b5cf6", icon: "video" },
-  Music: { color: "#ec4899", icon: "music" },
-  Programs: { color: "#3b82f6", icon: "app" },
-  Compressed: { color: "#f59e0b", icon: "archive" },
-  Torrents: { color: "#14b8a6", icon: "magnet" },
-  Documents: { color: "#10b981", icon: "doc" },
-  Images: { color: "#f97316", icon: "image" },
-  Other: { color: "#8b8f98", icon: "file" },
-};
-const cat = (it) => CATS[it.category] || CATS.Other;
-const typeIcon = (name) => `<span class="ni-type" style="--c:${(CATS[name] || CATS.Other).color}">${icon((CATS[name] || CATS.Other).icon)}</span>`;
-const ftile = (it, lg = false) => `<div class="ftile ${lg ? "lg" : ""}" style="--c:${cat(it).color}">${icon(cat(it).icon)}</div>`;
+const cat = (it: { category: string }) => CATS[it.category] || CATS.Other;
+const typeIcon = (name: string) => `<span class="ni-type" style="--c:${(CATS[name] || CATS.Other).color}">${icon((CATS[name] || CATS.Other).icon)}</span>`;
+const ftile = (it: { category: string }, lg = false) => `<div class="ftile ${lg ? "lg" : ""}" style="--c:${cat(it).color}">${icon(cat(it).icon)}</div>`;
 
 // Status glyph: a progress ring that fills clockwise while downloading
 // (pause bars inside when paused), a dotted ring when queued, and filled
 // badges for done and failed.
-function statusIcon(it) {
+type StatusLike = { status: Status; size: number | null; downloaded: number };
+function statusIcon(it: StatusLike) {
   const s = it.status;
   if (s === "completed") return `<svg class="status" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7.25" fill="var(--green)"/><path d="m5.1 8.2 2 2 3.8-4" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   if (s === "error") return `<svg class="status" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7.25" fill="var(--red)"/><path d="M8 4.6v4.2" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="11.2" r="1" fill="#fff"/></svg>`;
@@ -86,66 +39,46 @@ function statusIcon(it) {
   return `<svg class="status" viewBox="0 0 16 16"><circle cx="8" cy="8" r="${r}" fill="none" stroke="var(--track)" stroke-width="1.7"/><circle cx="8" cy="8" r="${r}" fill="none" stroke="${color}" stroke-width="1.7" stroke-linecap="round" stroke-dasharray="${(c * p).toFixed(2)} ${c.toFixed(2)}" transform="rotate(-90 8 8)"/>${inner}</svg>`;
 }
 
-// ---------- formatting ----------
-const UNITS = ["B", "KB", "MB", "GB", "TB"];
-function parts(n) {
-  if (n == null || !isFinite(n)) return ["—", ""];
-  let i = 0;
-  while (n >= 1024 && i < UNITS.length - 1) { n /= 1024; i++; }
-  return [i === 0 ? String(Math.round(n)) : n < 10 ? n.toFixed(2) : n < 100 ? n.toFixed(1) : String(Math.round(n)), UNITS[i]];
-}
-const bytes = (n) => (n == null ? "—" : parts(n).join(" "));
-const speed = (b) => (b > 0 ? `${bytes(b)}/s` : "—");
-function dur(sec) {
-  if (!isFinite(sec) || sec <= 0) return "—";
-  sec = Math.ceil(sec);
-  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
-  return h ? `${h}h ${m}m` : m ? `${m}m ${s}s` : `${s}s`;
-}
-function when(ms) {
-  if (!ms) return "";
-  const d = new Date(ms), now = new Date();
-  const mins = Math.round((now - d) / 60000);
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins}m ago`;
-  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  const y = new Date(now); y.setDate(now.getDate() - 1);
-  if (d.toDateString() === y.toDateString()) return "Yesterday";
-  return d.toLocaleDateString([], { month: "short", day: "numeric" });
-}
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const $ = (id) => document.getElementById(id);
-const pct = (it) => (it.size ? Math.min(100, (it.downloaded / it.size) * 100) : it.status === "completed" ? 100 : 0);
-const eta = (it) => (it.speed > 0 && it.size ? (it.size - it.downloaded) / it.speed : Infinity);
-const isActive = (it) => it.status === "downloading" || it.status === "queued";
-const host = (url) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; } };
-const ext = (name) => (/\.([a-z0-9]{1,5})$/i.exec(name || "") || [])[1]?.toUpperCase() || "";
-const STATUS = { downloading: "Downloading", queued: "Queued", paused: "Paused", completed: "Completed", error: "Failed" };
+const pct = (it: StatusLike) => (it.size ? Math.min(100, (it.downloaded / it.size) * 100) : it.status === "completed" ? 100 : 0);
+const eta = (it: Item) => (it.speed > 0 && it.size ? (it.size - it.downloaded) / it.speed : Infinity);
+const isActive = (it: Item) => it.status === "downloading" || it.status === "queued";
+const ext = (name: string) => (/\.([a-z0-9]{1,5})$/i.exec(name || "") || [])[1]?.toUpperCase() || "";
+const STATUS: Record<Status, string> = { downloading: "Downloading", queued: "Queued", paused: "Paused", completed: "Completed", error: "Failed" };
 
 // ---------- state ----------
 const HISTORY = 120;
 const LIMITS = [0, 256, 1024, 5120, 10240];
-const state = {
-  items: [], settings: null, view: "all", search: "", selected: null, sel: new Set(), anchor: null, pending: [], update: null,
-  speedHist: new Map(), totalHist: [], typesOpen: true,
+interface State {
+  version: string;
+  tag: string; repo: string;
+  toolUpdates: { name: string; current: string; latest: string }[];
+  items: Item[]; settings: Settings | null; view: string; search: string; selected: number | null; sel: Set<number>; anchor: number | null; pending: Incoming[];
+  speedHist: Map<number, number[]>; totalHist: number[]; typesOpen: boolean; integration: IntegrationStatus | null;
+}
+const state: State = {
+  version: "", tag: "", repo: "",
+  toolUpdates: [], items: [], settings: null, view: "all", search: "", selected: null, sel: new Set(), anchor: null, pending: [],
+  speedHist: new Map(), totalHist: [], typesOpen: true, integration: null,
 };
-const VIEWS = {
+const settings = (): Settings => state.settings as Settings;
+interface View { name: string; icon: string; test: (i: Item) => boolean }
+const VIEWS: Record<string, View> = {
   all: { name: "All downloads", icon: "inbox", test: () => true },
   active: { name: "In progress", icon: "arrowDown", test: (i) => i.status !== "completed" && i.status !== "error" },
   completed: { name: "Completed", icon: "doneCircle", test: (i) => i.status === "completed" },
   failed: { name: "Failed", icon: "alert", test: (i) => i.status === "error" },
 };
-const byId = (id) => state.items.find((i) => i.id === id);
+const byId = (id: number | null) => state.items.find((i) => i.id === id);
 function visible() {
   const v = VIEWS[state.view];
   const q = state.search.trim().toLowerCase();
   return state.items.filter((it) => (v ? v.test(it) : it.category === state.view) &&
     (!q || it.filename.toLowerCase().includes(q) || it.url.toLowerCase().includes(q)));
 }
-const GROUPS = [
+const GROUPS: [Status, string][] = [
   ["downloading", "Downloading"], ["queued", "Queued"], ["paused", "Paused"], ["error", "Failed"], ["completed", "Completed"],
 ];
-function grouped(list) {
+function grouped(list: Item[]) {
   return GROUPS.map(([s, title]) => {
     const items = list.filter((i) => i.status === s);
     items.sort(s === "completed" ? (a, b) => (b.completedAt || 0) - (a.completedAt || 0) : (a, b) => b.addedAt - a.addedAt);
@@ -155,11 +88,11 @@ function grouped(list) {
 const orderIds = () => grouped(visible()).flatMap((g) => g.items.map((i) => i.id));
 
 // ---------- charts ----------
-function areaChart(canvas, data, { grid = false } = {}) {
+function areaChart(canvas: HTMLCanvasElement, data: number[], { grid = false, fill = true } = {}) {
   const dpr = devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
   if (!w || !h) return;
   if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d")!;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
   const css = getComputedStyle(document.documentElement);
@@ -171,7 +104,7 @@ function areaChart(canvas, data, { grid = false } = {}) {
   // never draws over them.
   const gutter = grid ? 58 : 0;
   const pw = w - gutter, top = grid ? 6 : 2, bottom = grid ? 6 : 2;
-  const yOf = (v) => h - bottom - (v / max) * (h - top - bottom);
+  const yOf = (v: number) => h - bottom - (v / max) * (h - top - bottom);
   if (grid) {
     ctx.lineWidth = 1;
     ctx.font = `500 10.5px ${css.getPropertyValue("--font")}`;
@@ -188,7 +121,7 @@ function areaChart(canvas, data, { grid = false } = {}) {
     ctx.setLineDash([]);
   }
   const n = HISTORY, span = Math.max(Math.min(data.length, n), 30) - 1;
-  const pts = data.slice(-n).map((v, i, a) => [pw - (a.length - 1 - i) * (pw / span), yOf(v)]);
+  const pts = data.slice(-n).map((v, i, a): [number, number] => [pw - (a.length - 1 - i) * (pw / span), yOf(v)]);
   if (pts.length < 2) return;
   const path = new Path2D();
   pts.forEach(([x, y], i) => {
@@ -196,18 +129,18 @@ function areaChart(canvas, data, { grid = false } = {}) {
     else { const [px, py] = pts[i - 1], cx = (px + x) / 2; path.bezierCurveTo(cx, py, cx, y, x, y); }
   });
   const area = new Path2D(path);
-  area.lineTo(pts.at(-1)[0], h - bottom); area.lineTo(pts[0][0], h - bottom); area.closePath();
+  area.lineTo(pts[pts.length - 1][0], h - bottom); area.lineTo(pts[0][0], h - bottom); area.closePath();
   const g = ctx.createLinearGradient(0, 0, 0, h);
   g.addColorStop(0, accent + "40"); g.addColorStop(1, accent + "00");
-  ctx.fillStyle = g; ctx.fill(area);
+  if (fill) { ctx.fillStyle = g; ctx.fill(area); }
   ctx.strokeStyle = accent; ctx.lineWidth = 1.5; ctx.stroke(path);
 }
 
 // ---------- sidebar ----------
 function renderNav() {
-  const count = (fn) => state.items.filter(fn).length;
+  const count = (fn: (i: Item) => boolean) => state.items.filter(fn).length;
   const live = state.items.some((i) => i.status === "downloading");
-  const item = (view, label, ic, n, extra = "") =>
+  const item = (view: string, label: string, ic: string, n: number, extra = "") =>
     `<button class="nav-item ${state.view === view ? "on" : ""}" data-view="${view}"><span class="ni-icon">${ic}</span><span class="ni-label">${label}</span>${extra}<span class="ni-count">${n || ""}</span></button>`;
   let html = item("all", "All downloads", icon("inbox"), state.items.length) +
     item("active", "In progress", icon("arrowDown"), count(VIEWS.active.test), live ? '<span class="ni-live"></span>' : "") +
@@ -233,29 +166,30 @@ function renderNav() {
 }
 
 // ---------- header ----------
-function renderHeader(list) {
+function renderHeader(list: Item[]) {
   const v = VIEWS[state.view];
   $("h-icon").innerHTML = v ? icon(v.icon) : typeIcon(state.view);
   $("h-name").textContent = v ? v.name : state.view;
-  $("h-count").textContent = list.length || "";
+  $("h-count").textContent = list.length ? String(list.length) : "";
   $("btn-clear-done").hidden = !list.some((i) => i.status === "completed");
   $("btn-pause-all").hidden = !list.some(isActive);
   $("btn-resume-all").hidden = !list.some((i) => i.status === "paused" || i.status === "error");
 }
 
 // ---------- list ----------
-const rowEls = new Map(), headEls = new Map();
-function makeRow(id) {
-  const el = document.createElement("div");
-  el.className = "row"; el.dataset.id = id;
+interface RowEl extends HTMLDivElement { _c: HTMLElement[]; _k: string[] }
+const rowEls = new Map<number, RowEl>(), headEls = new Map<string, HTMLDivElement>();
+function makeRow(id: number): RowEl {
+  const el = document.createElement("div") as RowEl;
+  el.className = "row"; el.dataset.id = String(id);
   el.innerHTML = `<span class="r-status"></span><div class="r-main"></div><div class="r-meta"></div>`;
-  el._c = [...el.children]; el._k = [];
+  el._c = [...el.children] as HTMLElement[]; el._k = [];
   return el;
 }
-function set(el, i, html) { if (el._k[i] !== html) { el._k[i] = html; el._c[i].innerHTML = html; } }
-function meta(it) {
+function set(el: RowEl, i: number, html: string) { if (el._k[i] !== html) { el._k[i] = html; el._c[i].innerHTML = html; } }
+function meta(it: Item) {
   const p = Math.floor(pct(it));
-  const mini = (cls) => `<span class="mini ${cls}"><i style="width:${pct(it)}%"></i></span><span class="pct">${it.size ? p + "%" : ""}</span>`;
+  const mini = (cls: string) => `<span class="mini ${cls}"><i style="width:${pct(it)}%"></i></span><span class="pct">${it.size ? p + "%" : ""}</span>`;
   switch (it.status) {
     case "downloading":
       return `${mini("")}<span class="m-size">${bytes(it.downloaded)} / ${bytes(it.size)}</span><span class="m-speed">${it.speed > 0 ? speed(it.speed) : "Connecting…"}</span><span class="m-eta">${dur(eta(it))}</span>`;
@@ -265,7 +199,7 @@ function meta(it) {
     default: return `<span class="cat"><i style="background:${cat(it).color}"></i>${esc(it.category)}</span><span class="m-size">${bytes(it.size)}</span><span class="m-when">${when(it.completedAt)}</span>`;
   }
 }
-function updateRow(el, it) {
+function updateRow(el: RowEl, it: Item) {
   el.classList.toggle("sel", state.sel.has(it.id));
   el.classList.toggle("multi", state.sel.size > 1 && state.sel.has(it.id));
   set(el, 0, statusIcon(it));
@@ -304,74 +238,44 @@ function renderList() {
   return list;
 }
 
-// ---------- connection slots ----------
-// Same view as the download window: each connection's part of the file is
-// a rounded slot, filled as far as that connection has got. When nothing is
-// running (no live segments) it falls back to a single bar.
-function renderLanes(el, it) {
-  const size = it.size || 1;
-  const segs = (it.segments || []).filter(([s, , e]) => e > s);
-  const paused = it.status !== "downloading";
-  if (!segs.length) {
-    const html = `<div class="lanes-empty ${paused ? "paused" : ""}"><i style="width:${pct(it)}%"></i></div>`;
-    if (el.innerHTML !== html) el.innerHTML = html;
-    return 0;
-  }
-  if (el.firstElementChild?.className !== `lanes ${paused ? "paused" : ""}` || el.firstElementChild.children.length !== segs.length) {
-    el.innerHTML = `<div class="lanes ${paused ? "paused" : ""}">${segs.map(() => `<span class="slot"><i></i></span>`).join("")}</div>`;
-  }
-  segs.forEach(([s, p, e], i) => {
-    const slot = el.firstElementChild.children[i];
-    slot.style.left = `calc(${(s / size) * 100}% + 1px)`;
-    slot.style.width = `calc(${((e - s) / size) * 100}% - 2px)`;
-    slot.firstElementChild.style.width = `${((p - s) / Math.max(1, e - s)) * 100}%`;
-  });
-  return segs.filter(([, p, e]) => p < e).length;
-}
-
 // ---------- inspector ----------
-let insKey = null;
+let insKey: string | null = null;
 function renderInspector() {
   const panel = $("inspector");
-  const it = state.selected != null ? byId(state.selected) : null;
+  const it = byId(state.selected);
   if (!it) { panel.hidden = true; insKey = null; return; }
   panel.hidden = false;
   const key = `${it.id}:${it.status}`;
   const dl = it.status === "downloading";
   if (insKey !== key) {
     insKey = key;
-    const hasMap = it.status !== "completed" && it.size;
     panel.innerHTML = `<div class="ins-scroll">
         <div class="ins-top"><span class="ins-glyph">${icon(cat(it).icon)}</span><div class="ins-head"><div class="ins-title">${esc(it.filename)}</div><div class="ins-meta" id="ins-chips"></div></div><button class="sq-btn" data-ins="close" title="Close (Esc)">${icon("x")}</button></div>
-        <div class="ins-sec"><div class="ins-sec-head">Progress<span id="ins-pct"></span></div><div class="ins-bar" id="ins-bar"><i></i></div><dl class="props" id="ins-stats"></dl></div>
-        ${hasMap ? `<div class="ins-sec"><div class="ins-sec-head">Connections<span id="ins-conn"></span></div><div id="ins-map"></div></div>` : ""}
+        <div class="ins-sec"><div class="ins-sec-head">Progress<span id="ins-pct"></span></div><div class="segbar" id="ins-bar"></div><dl class="props" id="ins-stats"></dl></div>
         <div class="ins-sec" id="ins-graph-sec"><div class="ins-sec-head">Speed<span id="ins-peak"></span></div><canvas id="ins-graph"></canvas></div>
         <div class="ins-sec"><div class="ins-sec-head">Details</div><dl class="props" id="ins-props"></dl></div>
       </div>
       <div class="ins-foot" id="ins-foot"></div>`;
   }
-  const dotColor = { downloading: "var(--accent)", queued: "var(--faint)", paused: "var(--amber)", completed: "var(--green)", error: "var(--red)" }[it.status];
-  const meta = `<span class="dot" style="background:${dotColor}"></span><span>${STATUS[it.status]}</span><span>·</span><span>${esc(it.category)}</span><span>·</span><span class="trunc">${esc(host(it.url))}</span>`;
+  const finishing = dl && !!it.size && it.downloaded >= it.size;
+  const meta = `<span class="st-${it.status}">${finishing ? "Finishing…" : STATUS[it.status]}</span><span class="trunc">from ${esc(host(it.url))}</span>`;
   if ($("ins-chips").innerHTML !== meta) $("ins-chips").innerHTML = meta;
 
   $("ins-pct").textContent = it.size ? `${Math.floor(pct(it))}%` : "";
   const bar = $("ins-bar");
-  bar.className = `ins-bar ${it.status}`;
-  bar.firstElementChild.style.width = `${pct(it)}%`;
-  const row = (k, v) => `<dt>${k}</dt><dd><span>${v}</span></dd>`;
+  bar.className = `segbar ${it.status}`;
+  segBar(bar, null, undefined, pct(it));
+  const row = (k: string, v: string) => `<dt>${k}</dt><dd><span>${v}</span></dd>`;
   const stats = it.status === "completed"
     ? row("Size", bytes(it.size)) + row("Finished", when(it.completedAt) || "—")
     : row("Downloaded", it.size ? `${bytes(it.downloaded)} of ${bytes(it.size)}` : bytes(it.downloaded)) +
-      (dl ? row("Speed", speed(it.speed)) + row("Time left", dur(eta(it))) : "");
+      (dl && !finishing ? row("Speed", speed(it.speed)) + row("Time left", dur(eta(it))) : "") +
+      (dl && it.connections ? row("Connections", String(it.connections)) : "");
   if ($("ins-stats").innerHTML !== stats) $("ins-stats").innerHTML = stats;
 
-  if ($("ins-map")) {
-    const active = renderLanes($("ins-map"), it);
-    $("ins-conn").textContent = dl ? `${active || it.connections} active` : it.status === "paused" ? "Paused" : "";
-  }
   const hist = state.speedHist.get(it.id) || [];
-  $("ins-graph-sec").hidden = !hist.some((v) => v > 0);
-  if (!$("ins-graph-sec").hidden) { areaChart($("ins-graph"), hist, { grid: true }); $("ins-peak").textContent = `Peak ${speed(Math.max(...hist))}`; }
+  $("ins-graph-sec").hidden = !hist.some((v: number) => v > 0);
+  if (!$("ins-graph-sec").hidden) { areaChart($("ins-graph"), hist, { fill: false }); $("ins-peak").textContent = `Peak ${speed(Math.max(...hist))}`; }
 
   const dir = it.path.replace(/[\\/][^\\/]*$/, "");
   const props = `
@@ -391,18 +295,28 @@ function renderInspector() {
 }
 
 // ---------- browser integration ----------
+let loadedOnce = false;
 async function loadIntegration() {
+  const before = state.integration?.lastSeen || 0;
   try { state.integration = await invoke("integration_status"); } catch { state.integration = null; }
+  const now = state.integration;
+  // The extension checks in as soon as it is added or reloaded: say so at once.
+  if (now?.lastSeen && now.lastSeen > before && (!before || $("dlg-ext").open)) {
+    const who = now.browsers.filter((x) => x.lastSeen).sort((x, y) => (y.lastSeen || 0) - (x.lastSeen || 0))[0];
+    if ($("dlg-ext").open) $("dlg-ext").close();
+    if (loadedOnce) toast(`Connected in ${who?.name || "your browser"}`, "ok");
+  }
+  loadedOnce = true;
   renderOnboard();
   if ($("dlg-settings").open) renderBrowserPanel();
 }
-const installedBrowsers = () => (state.integration?.browsers || []).filter((b) => b.installed);
+const installedBrowsers = (): BrowserStatus[] => (state.integration?.browsers || []).filter((b) => b.installed);
 function renderOnboard() {
   const card = $("onboard");
   const i = state.integration;
-  const show = i && !i.lastSeen && !state.settings?.onboardingDismissed && installedBrowsers().length > 0;
+  const show = !!i && !i.lastSeen && !state.settings?.onboardingDismissed && installedBrowsers().length > 0;
   card.hidden = !show;
-  if (!show) return;
+  if (!show || !i) return;
   // Until the extension is on the Chrome Web Store, store buttons would lead
   // to a missing page, so offer the guided manual install instead.
   const actions = i.storeAvailable
@@ -411,43 +325,73 @@ function renderOnboard() {
   const html = `<span class="ob-icon">${icon("globe")}</span>
     <span class="ob-text"><b>Connect your browser</b>Catch downloads automatically and get a download button on videos</span>
     <span class="ob-actions">${actions}<button class="sq-btn" data-dismiss title="Dismiss">${icon("x")}</button></span>`;
-  if (card.innerHTML !== html) card.innerHTML = html;
+  // innerHTML never reads back identical, so compare with what we wrote last;
+  // rebuilding it on every poll replaced the button mid-click.
+  if (card.dataset.html !== html) { card.innerHTML = html; card.dataset.html = html; }
 }
-async function openExtensionGuide() {
+// One flow for every entry point: the banner, the empty state, the command
+// palette and each browser in Settings → Browser.
+const EXT_PAGE: Record<string, string> = { edge: "edge://extensions", brave: "brave://extensions", vivaldi: "vivaldi://extensions", firefox: "about:debugging" };
+let guidePoll = 0;
+async function openExtensionGuide(browserId?: string) {
+  const i = state.integration;
+  // Firefox has its listing on Firefox Add-ons; Chromium browsers wait for the Chrome Web Store.
+  if (browserId === "firefox" || (i?.storeAvailable && browserId)) return openStore(browserId);
   const dir = await invoke("extension_dir").catch(() => null);
-  $("ext-path").textContent = dir || "%LOCALAPPDATA%\\SwiftDL\\extension";
-  $("ext-path").title = $("ext-path").textContent;
-  // The Firefox add-on is installed next to it, in extension-firefox.
-  $("ext-path-ff").textContent = $("ext-path").textContent.replace(/extension$/, "extension-firefox");
-  $("dlg-ext").showModal();
+  const ff = browserId === "firefox";
+  const path = (dir || "%LOCALAPPDATA%\\SwiftDL\\extension") + (ff ? "-firefox" : "");
+  $("ext-path").textContent = path;
+  $("ext-path").title = path;
+  const b = installedBrowsers().find((x) => x.id === browserId);
+  $("ext-step1").innerHTML = ff
+    ? "Firefox: open <code>about:debugging</code>, choose This Firefox, then Load Temporary Add-on and pick <code>manifest.json</code> in the folder below"
+    : `Type <code>${EXT_PAGE[browserId || ""] || "chrome://extensions"}</code> in the address bar${b ? `, or open it in ${b.name}:` : ""}`;
+  const choices = b ? [b] : installedBrowsers().filter((x) => x.id !== "firefox");
+  $("ext-browsers").innerHTML = choices.map((x) => `<button type="button" class="btn sm" data-open-ext="${x.id}"><img class="blogo sm" src="browsers/${x.id}.svg" alt="">Open in ${x.name}</button>`).join("");
+  $("ext-wait").textContent = "Waiting for the extension to connect…";
+  if (!$("dlg-ext").open) $("dlg-ext").showModal();
+  if (b) openExtPage(b.id);
+  // Check often while the guide is open, so it notices the connection at once.
+  clearInterval(guidePoll);
+  guidePoll = window.setInterval(() => {
+    if (!$("dlg-ext").open) return clearInterval(guidePoll);
+    loadIntegration();
+  }, 1500);
 }
+async function openExtPage(id: string) {
+  copy($("ext-path").textContent || "", "Folder path copied, paste it into the picker");
+  try { await invoke("open_extensions_page", { browser: id }); }
+  catch (e) { toast(esc(String(e)), "err"); }
+}
+$("ext-browsers").addEventListener("click", (e) => { const b = target(e).closest<HTMLElement>("[data-open-ext]"); if (b) openExtPage(b.dataset.openExt!); });
 $("ext-copy").innerHTML = icon("copy");
-$("ext-copy").onclick = () => copy($("ext-path").textContent, "Folder path copied");
+$("ext-copy").onclick = () => copy($("ext-path").textContent || "", "Folder path copied");
 $("ext-open").onclick = () => call("open_extension_folder");
+$("ext-ff-store").onclick = (e) => { e.preventDefault(); openStore("firefox"); };
 $("onboard").addEventListener("click", async (e) => {
-  if (e.target.closest("[data-guide]")) return openExtensionGuide();
-  const s = e.target.closest("[data-store]");
-  if (s) return openStore(s.dataset.store);
-  if (e.target.closest("[data-dismiss]")) {
-    await saveSettings({ ...state.settings, onboardingDismissed: true });
+  if (target(e).closest<HTMLElement>("[data-guide]")) return openExtensionGuide();
+  const s = target(e).closest<HTMLElement>("[data-store]");
+  if (s) return openStore(s.dataset.store!);
+  if (target(e).closest<HTMLElement>("[data-dismiss]")) {
+    await saveSettings({ ...settings(), onboardingDismissed: true });
     renderOnboard();
   }
 });
-async function openStore(browser) {
+async function openStore(browser: string) {
   await call("open_store", { browser });
-  toast("Opened the extension page. Click “Add to browser” there.", "ok");
+  toast(browser === "firefox" ? "Opened Firefox Add-ons. Click “Add to Firefox” there." : "Opened the extension page. Click “Add to browser” there.", "ok");
 }
 function renderBrowserPanel() {
   const i = state.integration;
   if (!i) return;
   const store = i.storeAvailable;
-  const hint = store ? "Add it to a browser below, then open that browser once" : "Follow the steps below, then open the browser once";
-  const connected = i.browsers.filter((b) => b.lastSeen).sort((a, b) => b.lastSeen - a.lastSeen);
-  const logo = (b, cls = "") => `<img class="blogo ${cls}" src="browsers/${b.id}.svg" alt="" width="28" height="28">`;
+  const hint = "Click Add next to a browser below";
+  const connected = i.browsers.filter((b) => b.lastSeen).sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
+  const logo = (b: BrowserStatus, cls = "") => `<img class="blogo ${cls}" src="browsers/${b.id}.svg" alt="" width="28" height="28">`;
   $("ext-status").innerHTML = connected.length
     ? `${logo(connected[0])}<div class="sr-text"><b>Connected in ${connected.map((b) => b.name).join(", ").replace(/, ([^,]*)$/, " and $1")}</b><span>Last active ${when(connected[0].lastSeen).toLowerCase()}</span></div>`
     : `<div class="sr-text"><b>Not connected yet</b><span>${hint}</span></div>`;
-  const rank = (b) => (b.lastSeen ? 2 : b.installed ? 1 : 0);
+  const rank = (b: BrowserStatus) => (b.lastSeen ? 2 : b.installed ? 1 : 0);
   $("browser-list").innerHTML = [...i.browsers].sort((a, b) => rank(b) - rank(a)).map((b) => {
     const sub = b.lastSeen ? `Connected · last active ${when(b.lastSeen).toLowerCase()}`
       : !b.installed ? "Not installed"
@@ -455,16 +399,13 @@ function renderBrowserPanel() {
     return `<div class="set-row">
       ${logo(b, b.installed || b.lastSeen ? "" : "off")}
       <div class="sr-text"><b>${b.name}</b><span>${sub}</span></div>
-      ${!b.lastSeen && b.installed && store ? `<button type="button" class="btn sm" data-store="${b.id}">Add extension</button>` : ""}</div>`;
+      ${!b.lastSeen && b.installed ? `<button type="button" class="btn sm" data-add="${b.id}">Add to ${b.name}</button>` : ""}</div>`;
   }).join("");
-  // No store listing yet: show the manual steps up front, and hide the
-  // automatic offer, which only works once the extension is on the store.
-  const manual = document.querySelector(".manual");
-  manual.open = !store;
-  manual.querySelector("summary").textContent = store ? "Install manually" : "How to add it";
-  $("set-offer").closest(".set-group").hidden = !store;
+  $("ext-saveas").hidden = !connected.length;
+  // The automatic offer only works once the extension is on the store.
+  ($("set-offer").closest(".set-group") as HTMLElement).hidden = !store;
 }
-$("browser-list").addEventListener("click", (e) => { const b = e.target.closest("[data-store]"); if (b) openStore(b.dataset.store); });
+$("browser-list").addEventListener("click", (e) => { const b = target(e).closest<HTMLElement>("[data-add]"); if (b) openExtensionGuide(b.dataset.add); });
 
 function render() {
   // Forget removed downloads; the inspector shows only a single selection.
@@ -478,35 +419,37 @@ function render() {
 }
 
 // ---------- toasts ----------
-function toast(msg, kind = "info", opts = {}) {
+type ToastKind = "info" | "ok" | "err" | "dl";
+function toast(msg: string, kind: ToastKind = "info", opts: { sticky?: boolean; onClick?: () => void } = {}) {
   const el = document.createElement("div");
   el.className = `toast${opts.sticky ? " sticky" : ""}`;
   const ic = kind === "ok" ? "check" : kind === "err" ? "alert" : kind === "dl" ? "download" : "info";
   const close = () => { el.classList.add("out"); setTimeout(() => el.remove(), 200); };
   el.innerHTML = `<span class="t-ic ${kind}">${icon(ic)}</span><span>${msg}</span>${opts.sticky ? `<button class="t-x" title="Dismiss">${icon("x")}</button>` : ""}`;
   if (opts.sticky) {
-    el.onclick = (e) => { if (!e.target.closest(".t-x")) opts.onClick?.(); close(); };
-    el.querySelector(".t-x").onclick = (e) => { e.stopPropagation(); close(); };
+    el.onclick = (e) => { if (!target(e).closest(".t-x")) opts.onClick?.(); close(); };
+    el.querySelector<HTMLElement>(".t-x")!.onclick = (e) => { e.stopPropagation(); close(); };
   } else setTimeout(close, 2800);
   $("toasts").append(el);
-  while ($("toasts").children.length > 3) $("toasts").firstElementChild.remove();
+  while ($("toasts").children.length > 3) $("toasts").firstElementChild?.remove();
 }
-async function call(cmd, args) {
-  try { return await invoke(cmd, args); } catch (e) { toast(esc(String(e)), "err"); throw e; }
+/** invoke(), with any error shown as a toast. */
+async function call<K extends keyof Commands>(cmd: K, ...args: Commands[K][0] extends void ? [] : [Commands[K][0]]): Promise<Commands[K][1]> {
+  try { return await invoke(cmd, ...args); } catch (e) { toast(esc(String(e)), "err"); throw e; }
 }
 
 // ---------- actions ----------
-const resume = (ids) => ids.length && call("resume", { ids });
-const pause = (ids) => ids.length && call("pause", { ids });
-const copy = (text, msg) => navigator.clipboard.writeText(text).then(() => toast(msg, "ok"));
-function toggle(it) {
+const resume = (ids: number[]) => { if (ids.length) call("resume", { ids }); };
+const pause = (ids: number[]) => { if (ids.length) call("pause", { ids }); };
+const copy = (text: string, msg: string) => navigator.clipboard.writeText(text).then(() => toast(msg, "ok"));
+function toggle(it: Item | null | undefined) {
   if (!it || it.status === "completed") return;
-  isActive(it) ? pause([it.id]) : resume([it.id]);
+  if (isActive(it)) pause([it.id]); else resume([it.id]);
 }
 // Removes one download or several (an array); `title` overrides the wording
 // for "clear completed".
-function askDelete(target, title) {
-  const list = (Array.isArray(target) ? target : [target]).filter(Boolean);
+function askDelete(target: Item | Item[] | null | undefined, title?: string) {
+  const list = (Array.isArray(target) ? target : [target]).filter((i): i is Item => !!i);
   if (!list.length) return;
   const dlg = $("dlg-delete");
   const many = list.length > 1;
@@ -525,30 +468,31 @@ function askDelete(target, title) {
   };
   dlg.showModal();
 }
-const selectedItems = () => [...state.sel].map(byId).filter(Boolean);
-function act(name, it, anchor) {
+const selectedItems = () => [...state.sel].map(byId).filter((i): i is Item => !!i);
+function act(name: string, it: Item | null | undefined, anchor?: HTMLElement) {
   if (!it) return;
   switch (name) {
-    case "open": return call("open_file", { id: it.id });
-    case "folder": return call("open_folder", { id: it.id });
+    case "open": return void call("open_file", { id: it.id });
+    case "folder": return void call("open_folder", { id: it.id });
     case "pause": return pause([it.id]);
     case "resume": return resume([it.id]);
-    case "copy": return copy(it.url, "Link copied");
-    case "copy-path": return copy(it.path, "Path copied");
+    case "copy": return void copy(it.url, "Link copied");
+    case "copy-path": return void copy(it.path, "Path copied");
     case "delete": return askDelete(it);
-    case "more": { const r = anchor.getBoundingClientRect(); return itemMenu(it, r.right - 220, r.top - 8, true); }
+    case "more": { const r = anchor!.getBoundingClientRect(); return itemMenu(it, r.right - 220, r.top - 8, true); }
   }
 }
-function select(id, scroll = true) {
-  state.sel = new Set([id]);
+function select(id: number | null, scroll = true) {
+  state.sel = id == null ? new Set() : new Set([id]);
   state.anchor = id;
+  state.selected = id;
   render();
-  if (scroll) rowEls.get(id)?.scrollIntoView({ block: "nearest" });
+  if (scroll && id != null) rowEls.get(id)?.scrollIntoView({ block: "nearest" });
 }
-function clearSel() { state.sel = new Set(); state.anchor = null; render(); }
+function clearSel() { state.sel = new Set(); state.anchor = null; state.selected = null; render(); }
 // Click selects one, Ctrl/Cmd+click toggles, Shift+click selects the range
 // from the last click.
-function pick(id, e) {
+function pick(id: number, e: MouseEvent) {
   if (e.shiftKey && state.anchor != null) {
     const ids = orderIds(), a = ids.indexOf(state.anchor), b = ids.indexOf(id);
     if (a >= 0 && b >= 0) {
@@ -559,7 +503,7 @@ function pick(id, e) {
   }
   if (e.ctrlKey || e.metaKey) {
     state.sel = new Set(state.sel);
-    state.sel.has(id) ? state.sel.delete(id) : state.sel.add(id);
+    if (state.sel.has(id)) state.sel.delete(id); else state.sel.add(id);
     state.anchor = id;
     return render();
   }
@@ -568,11 +512,12 @@ function pick(id, e) {
   if (state.sel.size > 1 && state.sel.has(id)) return;
   select(id, false);
 }
-let cursor = null; // the row the arrow keys move from
-function move(d, extend = false) {
+let cursor: number | null = null; // the row the arrow keys move from
+function move(d: number, extend = false) {
   const ids = orderIds();
   if (!ids.length) return;
-  const from = ids.indexOf(extend && cursor != null ? cursor : state.selected ?? cursor);
+  const base = extend && cursor != null ? cursor : state.selected ?? cursor;
+  const from = base == null ? -1 : ids.indexOf(base);
   const to = ids[from < 0 ? (d > 0 ? 0 : ids.length - 1) : Math.max(0, Math.min(ids.length - 1, from + d))];
   if (extend && state.anchor != null) {
     const a = ids.indexOf(state.anchor), b = ids.indexOf(to);
@@ -584,18 +529,20 @@ function move(d, extend = false) {
 }
 
 // ---------- menus ----------
-function showMenu(x, y, entries, above = false) {
+interface MenuEntry { label: string; icon?: string; keys?: string[]; enabled?: boolean; danger?: boolean; checked?: boolean; dot?: string; run: () => void }
+type MenuLine = MenuEntry | "-" | { title: string };
+function showMenu(x: number, y: number, entries: MenuLine[], above = false) {
   const menu = $("menu");
-  menu.innerHTML = entries.map((e, i) => e === "-" ? `<div class="msep"></div>` : e.title ? `<div class="mtitle">${e.title}</div>` :
+  menu.innerHTML = entries.map((e, i) => e === "-" ? `<div class="msep"></div>` : "title" in e ? `<div class="mtitle">${e.title}</div>` :
     `<button data-i="${i}" class="${e.danger ? "danger" : ""}" ${e.enabled === false ? "disabled" : ""}>${e.icon ? icon(e.icon) : e.dot ? `<span class="ni-dot" style="background:${e.dot};margin:0 3px"></span>` : ""}<span>${e.label}</span>${e.checked ? `<span class="mcheck">${icon("check")}</span>` : e.keys ? `<span class="mh">${e.keys.map((k) => `<kbd>${k}</kbd>`).join("")}</span>` : ""}</button>`).join("");
-  menu.onclick = (ev) => { const b = ev.target.closest("button[data-i]"); if (b) { menu.hidden = true; entries[b.dataset.i].run(); } };
+  menu.onclick = (ev) => { const b = target(ev).closest<HTMLElement>("button[data-i]"); if (b) { menu.hidden = true; (entries[Number(b.dataset.i)] as MenuEntry).run(); } };
   menu.hidden = false;
   const r = menu.getBoundingClientRect();
   if (above) y = y - r.height;
   menu.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
   menu.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
 }
-function itemMenu(it, x, y, above = false) {
+function itemMenu(it: Item, x: number, y: number, above = false) {
   const many = selectedItems();
   if (many.length > 1 && state.sel.has(it.id)) {
     const n = many.length;
@@ -619,77 +566,79 @@ function itemMenu(it, x, y, above = false) {
     { icon: "trash", label: it.status === "completed" ? "Remove…" : "Cancel download…", keys: ["Del"], danger: true, run: () => askDelete(it) },
   ], above);
 }
-document.addEventListener("mousedown", (e) => { if (!e.target.closest("#menu") && !e.target.closest("#limit-btn") && !e.target.closest("[data-ins=more]")) $("menu").hidden = true; });
-document.addEventListener("contextmenu", (e) => { if (!e.target.closest("input")) e.preventDefault(); });
+document.addEventListener("mousedown", (e) => { if (!target(e).closest<HTMLElement>("#menu") && !target(e).closest<HTMLElement>("#limit-btn") && !target(e).closest<HTMLElement>("[data-ins=more]")) $("menu").hidden = true; });
+document.addEventListener("contextmenu", (e) => { if (!target(e).closest<HTMLElement>("input")) e.preventDefault(); });
 
 // ---------- events ----------
+// Double-click is read from mousedown's click count: a live row's details
+// are replaced every half second, and "dblclick" doesn't fire when the
+// element under the first click is gone by the second.
 $("rows").addEventListener("mousedown", (e) => {
-  const r = e.target.closest(".row");
-  if (!r || e.button === 2 && state.sel.has(Number(r.dataset.id))) return; // right-click keeps the selection
+  const r = target(e).closest<HTMLElement>(".row"), it = r ? byId(Number(r.dataset.id)) : undefined;
+  if (!r || !it) return;
+  if (e.button === 2 && state.sel.has(it.id)) return; // right-click keeps the selection
+  if (e.button !== 0 && e.button !== 2) return;
+  if (e.detail === 2 && e.button === 0) { if (it.status === "completed") act("open", it); else toggle(it); return; }
   if (e.shiftKey) e.preventDefault(); // no text selection while ranging
-  pick(Number(r.dataset.id), e);
-  cursor = Number(r.dataset.id);
+  pick(it.id, e);
+  cursor = it.id;
 });
 // A plain click inside a multi-selection narrows it to that row.
 $("rows").addEventListener("click", (e) => {
-  const r = e.target.closest(".row");
+  const r = target(e).closest<HTMLElement>(".row");
   if (r && !e.shiftKey && !e.ctrlKey && !e.metaKey && state.sel.size > 1) select(Number(r.dataset.id), false);
 });
-$("rows").addEventListener("dblclick", (e) => {
-  const r = e.target.closest(".row"), it = r && byId(Number(r.dataset.id));
-  if (it) it.status === "completed" ? act("open", it) : toggle(it);
-});
 $("rows").addEventListener("contextmenu", (e) => {
-  const r = e.target.closest(".row");
-  if (!r) return;
+  const r = target(e).closest<HTMLElement>(".row");
+  const it = r ? byId(Number(r.dataset.id)) : undefined;
+  if (!it) return;
   e.preventDefault();
-  const id = Number(r.dataset.id);
-  if (!state.sel.has(id)) select(id, false);
-  itemMenu(byId(id), e.clientX, e.clientY);
+  if (!state.sel.has(it.id)) select(it.id, false);
+  itemMenu(it, e.clientX, e.clientY);
 });
-$("list").addEventListener("mousedown", (e) => { if (!e.target.closest(".row") && !e.target.closest(".ghead") && !e.target.closest(".empty") && state.sel.size) clearSel(); });
+$("list").addEventListener("mousedown", (e) => { if (!target(e).closest<HTMLElement>(".row") && !target(e).closest<HTMLElement>(".ghead") && !target(e).closest<HTMLElement>(".empty") && state.sel.size) clearSel(); });
 $("inspector").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-ins]");
+  const b = target(e).closest<HTMLElement>("[data-ins]");
   if (!b) return;
   if (b.dataset.ins === "close") { clearSel(); return; }
-  act(b.dataset.ins, byId(state.selected), b);
+  act(b.dataset.ins!, byId(state.selected), b);
 });
 $("nav").addEventListener("click", (e) => {
-  if (e.target.closest("[data-toggle]")) { state.typesOpen = !state.typesOpen; render(); return; }
-  const b = e.target.closest("[data-view]");
-  if (b) { state.view = b.dataset.view; state.search = ""; render(); }
+  if (target(e).closest<HTMLElement>("[data-toggle]")) { state.typesOpen = !state.typesOpen; render(); return; }
+  const b = target(e).closest<HTMLElement>("[data-view]");
+  if (b) { state.view = b.dataset.view!; state.search = ""; render(); }
 });
 $("btn-clear-done").onclick = () => {
   const done = visible().filter((i) => i.status === "completed");
   askDelete(done, `Clear ${done.length === 1 ? "this completed download" : `${done.length} completed downloads`}?`);
 };
 $("btn-pause-all").onclick = () => pause(visible().filter(isActive).map((i) => i.id));
-$("btn-resume-all").onclick = () => resume(visible().filter((i) => i.status === "paused" || i.status === "error").map((i) => i.id));
+$("btn-resume-all").onclick = () => resume(visible().filter((i: Item) => i.status === "paused" || i.status === "error").map((i) => i.id));
 $("btn-add").onclick = $("empty-add").onclick = () => openComposer();
 $("btn-palette").onclick = $("btn-search").onclick = () => openPalette();
 $("btn-settings").onclick = () => openSettings();
-$("empty-ext").onclick = () => openSettings("browser");
+$("empty-ext").onclick = () => openExtensionGuide();
 $("w-min").onclick = () => appWindow?.minimize();
 $("w-max").onclick = () => appWindow?.toggleMaximize();
 $("w-close").onclick = () => appWindow?.close();
 if (!appWindow) $("win-ctrls").hidden = true;
 
-async function setLimit(k) {
-  await saveSettings({ ...state.settings, speedLimitKib: k });
+async function setLimit(k: number) {
+  await saveSettings({ ...settings(), speedLimitKib: k });
   toast(k ? `Speed limited to ${bytes(k * 1024)}/s` : "Speed limit removed", "ok");
 }
-const limitEntries = () => [
+const limitEntries = (): MenuLine[] => [
   { title: "Speed limit" },
-  ...LIMITS.map((k) => ({ label: k ? `${bytes(k * 1024)}/s` : "No limit", checked: k === state.settings.speedLimitKib, run: () => setLimit(k) })),
+  ...LIMITS.map((k): MenuEntry => ({ label: k ? `${bytes(k * 1024)}/s` : "No limit", checked: k === settings().speedLimitKib, run: () => setLimit(k) })),
   "-",
   { icon: "sliders", label: "Custom…", run: () => openSettings("speed") },
 ];
-$("limit-btn").onclick = (e) => { const r = e.currentTarget.getBoundingClientRect(); showMenu(r.left, r.top - 6, limitEntries(), true); };
+$("limit-btn").onclick = (e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); showMenu(r.left, r.top - 6, limitEntries(), true); };
 
 document.addEventListener("keydown", (e) => {
   const mod = e.ctrlKey || e.metaKey, k = e.key;
   if (mod && k.toLowerCase() === "k") { e.preventDefault(); if (!$("dlg-palette").open) openPalette(); return; }
-  if (document.querySelector("dialog[open]") || e.target.matches?.("input")) return;
+  if (document.querySelector("dialog[open]") || target(e).matches?.("input")) return;
   const it = state.selected != null ? byId(state.selected) : null;
   if (mod && k.toLowerCase() === "a") { e.preventDefault(); state.sel = new Set(orderIds()); render(); }
   else if (mod && k.toLowerCase() === "n") { e.preventDefault(); openComposer(); }
@@ -697,8 +646,8 @@ document.addEventListener("keydown", (e) => {
   else if (mod) return;
   else if (k === "ArrowDown" || k === "j") { e.preventDefault(); move(1, e.shiftKey); }
   else if (k === "ArrowUp" || k === "k") { e.preventDefault(); move(-1, e.shiftKey); }
-  else if (k === " ") { e.preventDefault(); state.sel.size > 1 ? bulkToggle() : toggle(it); }
-  else if (k === "Enter" && it) { e.preventDefault(); it.status === "completed" ? act("open", it) : toggle(it); }
+  else if (k === " ") { e.preventDefault(); if (state.sel.size > 1) bulkToggle(); else toggle(it); }
+  else if (k === "Enter" && it) { e.preventDefault(); if (it.status === "completed") act("open", it); else toggle(it); }
   else if ((k === "Delete" || k === "Backspace") && state.sel.size) { e.preventDefault(); askDelete(selectedItems()); }
   else if (k === "o" && it) act("folder", it);
   else if (k === "c" && it) act("copy", it);
@@ -712,42 +661,45 @@ function bulkToggle() {
   items.some(isActive) ? pause(items.filter(isActive).map((i) => i.id)) : resume(items.filter((i) => i.status === "paused" || i.status === "error").map((i) => i.id));
 }
 
-const firstUrl = (t) => (t || "").split(/\s+/).find((s) => /^(https?:\/\/|magnet:\?)\S+$/i.test(s));
+const firstUrl = (t: string | null | undefined) => (t || "").split(/\s+/).find((s) => /^(https?:\/\/|magnet:\?)\S+$/i.test(s));
 document.addEventListener("paste", (e) => {
-  if (document.querySelector("dialog[open]") || e.target.matches?.("input")) return;
-  const url = firstUrl(e.clipboardData.getData("text"));
+  if (document.querySelector("dialog[open]") || target(e).matches?.("input")) return;
+  const url = firstUrl(e.clipboardData?.getData("text"));
   if (url) openComposer({ url });
 });
 let drag = 0;
-document.addEventListener("dragenter", (e) => { if ([...e.dataTransfer.types].some((t) => t === "text/uri-list" || t === "text/plain")) { drag++; $("drop").hidden = false; } });
+document.addEventListener("dragenter", (e) => { if ([...(e.dataTransfer?.types || [])].some((t) => t === "text/uri-list" || t === "text/plain")) { drag++; $("drop").hidden = false; } });
 document.addEventListener("dragleave", () => { if (--drag <= 0) { drag = 0; $("drop").hidden = true; } });
 document.addEventListener("dragover", (e) => e.preventDefault());
 document.addEventListener("drop", (e) => {
   e.preventDefault(); drag = 0; $("drop").hidden = true;
-  const url = firstUrl(e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain"));
+  const url = firstUrl(e.dataTransfer?.getData("text/uri-list") || e.dataTransfer?.getData("text/plain"));
   if (url) openComposer({ url });
 });
 
 // ---------- command palette ----------
-let pal = { items: [], sel: 0 };
-function paletteItems(q) {
+interface PalItem { label: string; icon?: string; type?: string; status?: Item; sub?: string; keys?: string[]; run: () => void }
+type PalLine = PalItem | { title: string };
+const pal: { items: PalLine[]; sel: number } = { items: [], sel: 0 };
+const selectable = () => pal.items.filter((i): i is PalItem => !("title" in i));
+function paletteItems(q: string): PalLine[] {
   q = q.trim().toLowerCase();
-  const match = (s) => !q || s.toLowerCase().includes(q);
-  const out = [];
-  const actions = [
+  const match = (s: string) => !q || s.toLowerCase().includes(q);
+  const out: PalLine[] = [];
+  const actions: PalItem[] = [
     { icon: "plus", label: "New download", keys: ["Ctrl", "N"], run: () => openComposer() },
     { icon: "pause", label: "Pause all downloads", run: () => pause(state.items.filter(isActive).map((i) => i.id)) },
     { icon: "play", label: "Resume all downloads", run: () => resume(state.items.filter((i) => i.status === "paused" || i.status === "error").map((i) => i.id)) },
-    ...LIMITS.map((k) => ({ icon: "gauge", label: k ? `Limit speed to ${bytes(k * 1024)}/s` : "Remove speed limit", run: () => setLimit(k) })),
+    ...LIMITS.map((k): PalItem => ({ icon: "gauge", label: k ? `Limit speed to ${bytes(k * 1024)}/s` : "Remove speed limit", run: () => setLimit(k) })),
     { icon: "settings", label: "Open settings", keys: ["Ctrl", ","], run: () => openSettings() },
-    { icon: "globe", label: "Set up browser extension", run: () => openSettings("browser") },
+    { icon: "globe", label: "Set up browser extension", run: () => openExtensionGuide() },
   ].filter((a) => match(a.label));
-  const views = [
-    ...Object.entries(VIEWS).map(([k, v]) => ({ icon: v.icon, label: `Go to ${v.name}`, run: () => { state.view = k; render(); } })),
-    ...Object.keys(CATS).map((c) => ({ type: c, label: `Go to ${c}`, run: () => { state.view = c; render(); } })),
+  const views: PalItem[] = [
+    ...Object.entries(VIEWS).map(([k, v]): PalItem => ({ icon: v.icon, label: `Go to ${v.name}`, run: () => { state.view = k; render(); } })),
+    ...Object.keys(CATS).map((c): PalItem => ({ type: c, label: `Go to ${c}`, run: () => { state.view = c; render(); } })),
   ].filter((a) => match(a.label));
   const dls = state.items.filter((i) => q && (i.filename.toLowerCase().includes(q) || i.url.toLowerCase().includes(q))).slice(0, 8)
-    .map((i) => ({ status: i, label: i.filename, sub: STATUS[i.status], run: () => { state.view = "all"; select(i.id); } }));
+    .map((i): PalItem => ({ status: i, label: i.filename, sub: STATUS[i.status], run: () => { state.view = "all"; select(i.id); } }));
   if (dls.length) out.push({ title: "Downloads" }, ...dls);
   if (actions.length) out.push({ title: "Actions" }, ...actions);
   if (views.length && q) out.push({ title: "Navigation" }, ...views);
@@ -757,13 +709,13 @@ function paletteItems(q) {
 function renderPalette() {
   const q = $("pal-q").value;
   pal.items = paletteItems(q);
-  const selectable = pal.items.filter((i) => !i.title);
-  pal.sel = Math.min(pal.sel, Math.max(0, selectable.length - 1));
+  const sel = selectable();
+  pal.sel = Math.min(pal.sel, Math.max(0, sel.length - 1));
   let n = -1;
-  $("pal-list").innerHTML = selectable.length ? pal.items.map((i) => {
-    if (i.title) return `<div class="pal-sec">${i.title}</div>`;
+  $("pal-list").innerHTML = sel.length ? pal.items.map((i) => {
+    if ("title" in i) return `<div class="pal-sec">${i.title}</div>`;
     n++;
-    const ic = i.status ? statusIcon(i.status) : i.type ? typeIcon(i.type) : icon(i.icon);
+    const ic = i.status ? statusIcon(i.status) : i.type ? typeIcon(i.type) : icon(i.icon || "file");
     return `<button class="pal-item ${n === pal.sel ? "on" : ""}" data-n="${n}"><span class="pi-ic">${ic}</span><span class="pi-label">${esc(i.label)}${i.sub ? `<span class="pi-sub">${i.sub}</span>` : ""}</span>${i.keys ? `<span class="pi-right">${i.keys.map((k) => `<kbd>${k}</kbd>`).join("")}</span>` : ""}</button>`;
   }).join("") : `<div class="pal-empty">No results for “${esc(q)}”</div>`;
   $("pal-list").querySelector(".pal-item.on")?.scrollIntoView({ block: "nearest" });
@@ -775,29 +727,31 @@ function openPalette() {
   $("dlg-palette").showModal();
   $("pal-q").focus();
 }
-function runPalette(n) {
-  const item = pal.items.filter((i) => !i.title)[n];
+function runPalette(n: number) {
+  const item = selectable()[n];
   if (!item) return;
   $("dlg-palette").close();
   item.run();
 }
 $("pal-q").addEventListener("input", () => { pal.sel = 0; renderPalette(); });
 $("pal-q").addEventListener("keydown", (e) => {
-  const count = pal.items.filter((i) => !i.title).length;
+  const count = selectable().length;
   if (e.key === "ArrowDown") { e.preventDefault(); pal.sel = (pal.sel + 1) % Math.max(1, count); renderPalette(); }
   else if (e.key === "ArrowUp") { e.preventDefault(); pal.sel = (pal.sel - 1 + count) % Math.max(1, count); renderPalette(); }
   else if (e.key === "Enter") { e.preventDefault(); runPalette(pal.sel); }
 });
 $("pal-list").addEventListener("mousemove", (e) => {
-  const b = e.target.closest(".pal-item");
+  const b = target(e).closest<HTMLElement>(".pal-item");
   if (b && Number(b.dataset.n) !== pal.sel) { pal.sel = Number(b.dataset.n); $("pal-list").querySelectorAll(".pal-item").forEach((x) => x.classList.toggle("on", x === b)); }
 });
-$("pal-list").addEventListener("click", (e) => { const b = e.target.closest(".pal-item"); if (b) runPalette(Number(b.dataset.n)); });
+$("pal-list").addEventListener("click", (e) => { const b = target(e).closest<HTMLElement>(".pal-item"); if (b) runPalette(Number(b.dataset.n)); });
 $("dlg-palette").addEventListener("click", (e) => { if (e.target === $("dlg-palette")) $("dlg-palette").close(); });
 
 // ---------- composer (new download) ----------
-const add = { headers: [], seq: 0, timer: null, dirTouched: false, dir: "", info: null };
-function openComposer(incoming = null) {
+const add: { headers: Header[]; seq: number; timer: number; dirTouched: boolean; dir: string; info: ProbeInfo | null; suggest: string } =
+  { headers: [], seq: 0, timer: 0, dirTouched: false, dir: "", info: null, suggest: "" };
+interface ComposerInput { url: string; headers?: Header[]; filename?: string | null }
+function openComposer(incoming?: ComposerInput) {
   const dlg = $("dlg-add");
   if (dlg.open) return;
   add.headers = incoming?.headers || [];
@@ -814,8 +768,8 @@ function openComposer(incoming = null) {
   if (incoming?.url) probe();
   else readClip().then((u) => { if (u && !$("add-url").value) { $("add-url").value = u; $("add-url").select(); probe(); } });
 }
-const readClip = () => (navigator.clipboard?.readText?.() || Promise.resolve("")).then(firstUrl).catch(() => null);
-function setState(kind, msg = "") {
+const readClip = (): Promise<string | undefined> => (navigator.clipboard?.readText?.() || Promise.resolve("")).then(firstUrl).catch(() => undefined);
+function setState(kind: "idle" | "loading" | "error" | "done", msg = "") {
   const el = $("add-state");
   el.className = `comp-state ${kind === "error" ? "err" : ""}`;
   el.innerHTML = kind === "loading" ? `<span class="spinner"></span>Fetching file details…` : kind === "error" ? `${icon("alert")}${esc(msg)}` : kind === "idle" ? `SwiftDL checks the file's name and size before downloading.` : "";
@@ -834,7 +788,7 @@ function renderChips() {
 }
 async function probe() {
   const url = $("add-url").value.trim();
-  if (!/^(https?:\/\/|magnet:\?)\S+/i.test(url)) { add.info = null; $("add-file").hidden = true; renderChips(); url ? setState("error", "Paste a web link (http:// or https://) or a magnet link") : setState("idle"); return; }
+  if (!/^(https?:\/\/|magnet:\?)\S+/i.test(url)) { add.info = null; $("add-file").hidden = true; renderChips(); if (url) setState("error", "Paste a web link (http:// or https://) or a magnet link"); else setState("idle"); return; }
   const seq = ++add.seq;
   // Video sites need a quality and torrents a file choice: their own window.
   const special = await invoke("is_media_url", { url }).catch(() => false) || await invoke("is_torrent_url", { url, filename: null }).catch(() => false);
@@ -863,9 +817,9 @@ async function probe() {
     setState("error", `Couldn't reach that link: ${e}`);
   }
 }
-$("add-url").addEventListener("input", () => { clearTimeout(add.timer); add.timer = setTimeout(probe, 400); });
+$("add-url").addEventListener("input", () => { clearTimeout(add.timer); add.timer = window.setTimeout(probe, 400); });
 $("add-chips").addEventListener("click", async (e) => {
-  if (!e.target.closest("#add-folder")) return;
+  if (!target(e).closest<HTMLElement>("#add-folder")) return;
   const dir = await call("pick_folder", { start: add.dir || null });
   if (dir) { add.dir = dir; add.dirTouched = true; renderChips(); }
 });
@@ -875,18 +829,20 @@ $("add-later").onclick = () => submitAdd(false);
 $("form-add").addEventListener("submit", (e) => { e.preventDefault(); if (!$("add-start").disabled) submitAdd(true); });
 $("dlg-add").addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !$("add-start").disabled) { e.preventDefault(); submitAdd(true); } });
 $("dlg-add").addEventListener("close", () => { add.seq++; setTimeout(nextPending, 150); });
-async function submitAdd(start) {
+async function submitAdd(start: boolean) {
   const filename = $("add-filename").value.trim();
   if (!filename) return;
-  const id = await call("add_download", { req: { url: $("add-url").value.trim(), filename, dir: add.dir || state.settings.downloadDir, headers: add.headers, start } });
+  const id = await call("add_download", { req: { url: $("add-url").value.trim(), filename, dir: add.dir || settings().downloadDir, headers: add.headers, start } });
   $("dlg-add").close();
   if (state.view !== "all" && state.view !== "active") state.view = "all";
   select(id);
   toast(start ? `Downloading ${esc(filename)}` : `${esc(filename)} added for later`, start ? "dl" : "ok");
 }
 function nextPending() {
-  if ($("dlg-add").open || !state.pending.length) return;
-  const inc = state.pending.shift(), headers = [];
+  if ($("dlg-add").open) return;
+  const inc = state.pending.shift();
+  if (!inc) return;
+  const headers: Header[] = [];
   if (inc.cookies) headers.push(["Cookie", inc.cookies]);
   if (inc.referrer) headers.push(["Referer", inc.referrer]);
   if (inc.userAgent) headers.push(["User-Agent", inc.userAgent]);
@@ -896,25 +852,25 @@ function nextPending() {
 // ---------- settings ----------
 let setDir = "", setLimitKib = 0, setThemeChoice = "system", setSeed = "stop";
 function renderSeed() {
-  $("set-seed").querySelectorAll("[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === setSeed));
+  $("set-seed").querySelectorAll<HTMLElement>("[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === setSeed));
 }
-$("set-seed").addEventListener("click", (e) => { const b = e.target.closest("[data-v]"); if (b) { setSeed = b.dataset.v; renderSeed(); } });
+$("set-seed").addEventListener("click", (e) => { const b = target(e).closest<HTMLElement>("[data-v]"); if (b) { setSeed = b.dataset.v!; renderSeed(); } });
 function renderThemeChoice() {
-  $("set-theme").querySelectorAll("[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === setThemeChoice));
+  $("set-theme").querySelectorAll<HTMLElement>("[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === setThemeChoice));
 }
 // Picking a theme previews it at once; Cancel puts the saved one back.
 $("set-theme").addEventListener("click", (e) => {
-  const b = e.target.closest("[data-v]");
+  const b = target(e).closest<HTMLElement>("[data-v]");
   if (!b) return;
-  setThemeChoice = b.dataset.v;
+  setThemeChoice = b.dataset.v!;
   renderThemeChoice();
   window.setTheme(setThemeChoice);
 });
-const restoreTheme = () => window.setTheme(state.settings.theme);
+const restoreTheme = () => window.setTheme(settings().theme);
 $("dlg-settings").addEventListener("cancel", restoreTheme); // Escape
 $("dlg-settings").addEventListener("close", restoreTheme);
 function openSettings(tab = "general") {
-  const s = state.settings;
+  const s = settings();
   setThemeChoice = s.theme || "system";
   renderThemeChoice();
   setSeed = s.seedUntil || "stop";
@@ -933,8 +889,8 @@ function openSettings(tab = "general") {
   renderUpdateStatus();
   loadIntegration();
   loadTools();
-  $("set-conns").value = s.connections;
-  $("set-concurrent").value = s.maxConcurrent;
+  $("set-conns").value = String(s.connections);
+  $("set-concurrent").value = String(s.maxConcurrent);
   setLimitKib = s.speedLimitKib;
   renderLimits();
   showTab(tab);
@@ -945,54 +901,92 @@ async function loadTools() {
   const t = await call("tools_status").catch(() => null);
   if (!t) return;
   const have = [["yt-dlp", t.ytdlp], ["deno", t.deno], ["ffmpeg", t.ffmpeg]].map(([n, ok]) => `${n}: ${ok ? "ready" : "missing"}`).join(" - ");
-  $("set-tools-info").textContent = `${have}. Saved to ${t.dir}${t.portable ? " (portable)" : ""}`;
+  const upd = state.toolUpdates.length ? ` Update available: ${state.toolUpdates.map((u) => `${u.name} ${u.current} → ${u.latest}`).join(", ")}.` : "";
+  $("set-tools-info").textContent = `${have}. Saved to ${t.dir}${t.portable ? " (portable)" : ""}.${upd}`;
   const missing = !t.ytdlp || !t.deno || (!t.ffmpeg && t.ffmpegDownloadable);
   $("set-tools-go").hidden = !missing;
   $("set-tools-go").disabled = false;
+  $("set-tools-update").hidden = !state.toolUpdates.length;
+  $("set-tools-update").disabled = false;
+  $("set-tools-check").hidden = !t.ytdlp && !t.deno;
 }
-$("set-tools-go").onclick = async () => {
-  const bar = $("set-tools-bar"), go = $("set-tools-go");
-  go.disabled = true; bar.hidden = false;
+// Runs a tools command while showing its progress in a bar.
+async function runToolsJob(command: "install_tools" | "update_tools", bar: HTMLElement, noteEl: HTMLElement, buttons: { disabled: boolean }[]) {
+  buttons.forEach((b) => (b.disabled = true));
+  bar.hidden = false;
   const poll = setInterval(async () => {
     const note = await call("tools_note").catch(() => null);
     if (!note) return;
-    $("set-tools-note").textContent = note;
+    noteEl.textContent = note;
     const pct = /(\d+)%/.exec(note);
-    bar.querySelector("i").style.width = pct ? `${pct[1]}%` : "100%";
+    bar.querySelector("i")!.style.width = pct ? `${pct[1]}%` : "100%";
   }, 250);
-  try { await call("install_tools"); toast("Video tools are ready"); }
-  catch (e) { toast(String(e)); }
+  let ok = false;
+  try { await call(command); ok = true; }
+  catch (e) { toast(esc(String(e)), "err"); }
   clearInterval(poll);
   bar.hidden = true;
+  buttons.forEach((b) => (b.disabled = false));
+  return ok;
+}
+$("set-tools-go").onclick = async () => {
+  if (await runToolsJob("install_tools", $("set-tools-bar"), $("set-tools-note"), [$("set-tools-go"), $("set-tools-update")])) toast("Video tools are ready", "ok");
   loadTools();
+};
+$("set-tools-update").onclick = async () => {
+  if (await runToolsJob("update_tools", $("set-tools-bar"), $("set-tools-note"), [$("set-tools-go"), $("set-tools-update")])) {
+    state.toolUpdates = [];
+    toast("Video tools are up to date", "ok");
+  }
+  loadTools();
+};
+// yt-dlp and deno are checked against their newest releases. `manual` also reports "up to date" and errors.
+async function checkToolsUpdate(manual = false) {
+  try {
+    const list = await invoke("check_tools_update");
+    const isNew = list.some((u) => !state.toolUpdates.some((o) => o.name === u.name && o.latest === u.latest));
+    state.toolUpdates = list;
+    if (isNew) toast(`<span class="t-body"><b>Tool update available</b><small>${esc(list.map((u) => `${u.name} ${u.latest}`).join(", "))}. Click to update</small></span>`, "dl", { sticky: true, onClick: () => openSettings("general") });
+    if (manual && !list.length) toast("Video tools are up to date", "ok");
+  } catch (e) {
+    if (manual) toast(esc(String(e)), "err");
+  }
+  if ($("dlg-settings").open) loadTools();
+}
+$("set-tools-check").onclick = async () => {
+  const b = $("set-tools-check");
+  b.disabled = true; b.textContent = "Checking…";
+  await checkToolsUpdate(true);
+  b.disabled = false; b.textContent = "Check for tool updates";
 };
 function renderLimits() {
   $("set-limits").innerHTML = LIMITS.map((k) => `<button type="button" data-k="${k}" class="${k === setLimitKib ? "on" : ""}">${k ? bytes(k * 1024) + "/s" : "Off"}</button>`).join("");
   const c = $("set-limit-custom");
-  if (document.activeElement !== c) c.value = LIMITS.includes(setLimitKib) ? "" : setLimitKib;
+  if (document.activeElement !== c) c.value = LIMITS.includes(setLimitKib) ? "" : String(setLimitKib);
 }
-$("set-limits").addEventListener("click", (e) => { const b = e.target.closest("[data-k]"); if (b) { setLimitKib = Number(b.dataset.k); renderLimits(); } });
-$("set-limit-custom").addEventListener("input", (e) => { setLimitKib = Math.max(0, Number.parseInt(e.target.value, 10) || 0); renderLimits(); });
-function showTab(tab) {
-  $("set-nav").querySelectorAll("[data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
-  document.querySelectorAll("[data-panel]").forEach((p) => (p.hidden = p.dataset.panel !== tab));
+$("set-limits").addEventListener("click", (e) => { const b = target(e).closest<HTMLElement>("[data-k]"); if (b) { setLimitKib = Number(b.dataset.k); renderLimits(); } });
+$("set-limit-custom").addEventListener("input", (e) => { setLimitKib = Math.max(0, Number.parseInt($("set-limit-custom").value, 10) || 0); renderLimits(); });
+function showTab(tab: string) {
+  $("set-nav").querySelectorAll<HTMLElement>("[data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
+  document.querySelectorAll<HTMLElement>("[data-panel]").forEach((p) => (p.hidden = p.dataset.panel !== tab));
+  // Nothing to save on these tabs (Browser has a setting only once the store listing exists).
+  ($("dlg-settings").querySelector(".set-foot") as HTMLElement).hidden = tab === "about" || (tab === "browser" && !state.integration?.storeAvailable);
 }
-$("set-nav").addEventListener("click", (e) => { const b = e.target.closest("[data-tab]"); if (b) showTab(b.dataset.tab); });
-document.querySelectorAll(".stepper").forEach((st) => st.addEventListener("click", (e) => {
-  const b = e.target.closest("[data-d]");
+$("set-nav").addEventListener("click", (e) => { const b = target(e).closest<HTMLElement>("[data-tab]"); if (b) showTab(b.dataset.tab!); });
+document.querySelectorAll<HTMLElement>(".stepper").forEach((st) => st.addEventListener("click", (e) => {
+  const b = target(e).closest<HTMLElement>("[data-d]");
   if (!b) return;
-  const input = $(st.dataset.for);
-  input.value = Math.min(+input.max, Math.max(+input.min, (+input.value || 0) + Number(b.dataset.d)));
+  const input = $(st.dataset.for!);
+  input.value = String(Math.min(+input.max, Math.max(+input.min, (+input.value || 0) + Number(b.dataset.d))));
 }));
 $("set-browse").onclick = async () => { const d = await call("pick_folder", { start: setDir || null }); if (d) { setDir = d; $("set-dir").textContent = d; } };
 $("set-cancel").onclick = () => { restoreTheme(); $("dlg-settings").close(); };
-$("set-ext-folder").onclick = () => call("open_extension_folder");
-async function saveSettings(s) { await call("set_settings", { settings: s }); state.settings = s; render(); }
+async function saveSettings(s: Settings) { await call("set_settings", { settings: s }); state.settings = s; render(); }
 $("form-settings").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const clamp = (v, lo, hi, d) => Math.min(hi, Math.max(lo, Number.parseInt(v, 10) || d));
+  const clamp = (v: string, lo: number, hi: number, d: number) => Math.min(hi, Math.max(lo, Number.parseInt(v, 10) || d));
   await saveSettings({
-    downloadDir: setDir || state.settings.downloadDir,
+    downloadDir: setDir || settings().downloadDir,
     sortIntoCategories: $("set-sort").checked,
     connections: clamp($("set-conns").value, 1, 32, 8),
     maxConcurrent: clamp($("set-concurrent").value, 1, 10, 3),
@@ -1006,7 +1000,8 @@ $("form-settings").addEventListener("submit", async (e) => {
     autoUpdateCheck: $("set-autoupdate").checked,
     includeDevBuilds: $("set-devchannel").checked,
     debugLog: $("set-debuglog").checked,
-    onboardingDismissed: state.settings.onboardingDismissed,
+    onboardingDismissed: settings().onboardingDismissed,
+    welcomeDone: settings().welcomeDone,
     theme: setThemeChoice,
     seedUntil: setSeed,
   });
@@ -1014,12 +1009,45 @@ $("form-settings").addEventListener("submit", async (e) => {
   toast("Settings saved", "ok");
 });
 
+// ---------- welcome (first run) ----------
+function renderWelcomeTheme() {
+  $("welcome-theme").querySelectorAll<HTMLElement>("[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === (settings().theme || "system")));
+}
+$("welcome-theme").addEventListener("click", async (e) => {
+  const b = target(e).closest<HTMLElement>("[data-v]");
+  if (!b) return;
+  window.setTheme(b.dataset.v!);
+  await saveSettings({ ...settings(), theme: b.dataset.v! });
+  renderWelcomeTheme();
+});
+$("welcome-tools-go").onclick = async () => {
+  const go = $("welcome-tools-go");
+  if (await runToolsJob("install_tools", $("welcome-tools-bar"), $("welcome-tools-note"), [go])) {
+    $("welcome-tools-info").textContent = "Video tools are ready.";
+    go.hidden = true;
+  }
+};
+// Escape counts as "Get started" too.
+$("dlg-welcome").addEventListener("close", () => saveSettings({ ...settings(), welcomeDone: true }));
+async function maybeWelcome() {
+  if (settings().welcomeDone) return;
+  const t = await call("tools_status").catch(() => null);
+  // People updating from an older version who already have everything set up don't need it.
+  if (t && t.ytdlp && t.deno && (t.ffmpeg || !t.ffmpegDownloadable)) {
+    await saveSettings({ ...settings(), welcomeDone: true });
+    return;
+  }
+  renderWelcomeTheme();
+  $("dlg-welcome").showModal();
+}
+
 // ---------- updates ----------
 // Looks at GitHub's releases; the card and button open the release page,
 // where the installers are.
+let update: UpdateInfo | null = null;
 const updateCheck = { last: 0, error: "", checking: false };
 function renderUpdateStatus() {
-  const el = $("update-status"), u = state.update;
+  const el = $("update-status"), u = update;
   el.className = updateCheck.error ? "err" : u ? "" : updateCheck.last ? "ok" : "";
   el.textContent = updateCheck.checking ? "Checking…"
     : updateCheck.error ? `Couldn't check: ${updateCheck.error}`
@@ -1033,13 +1061,12 @@ async function checkForUpdate(manual = false) {
   updateCheck.checking = true; updateCheck.error = "";
   renderUpdateStatus();
   // The switch in an open Settings window applies to the check at once.
-  const dev = $("dlg-settings").open ? $("set-devchannel").checked : state.settings.includeDevBuilds;
+  const dev = $("dlg-settings").open ? $("set-devchannel").checked : settings().includeDevBuilds;
   try {
     const found = await invoke("check_update", { includeDev: dev });
     updateCheck.last = Date.now();
-    const isNew = found && found.tag !== state.update?.tag;
-    state.update = found;
-    if (isNew) toast(`<span class="t-body"><b>${found.prerelease ? "Dev build" : "Update"} ${esc(found.tag)} available</b><small>Click to open the download page</small></span>`, "dl", { sticky: true, onClick: () => call("open_url", { url: found.url }) });
+    update = found;
+    renderUpdate();
     if (manual && !found) toast("SwiftDL is up to date", "ok");
   } catch (e) {
     updateCheck.error = String(e);
@@ -1051,16 +1078,16 @@ async function checkForUpdate(manual = false) {
 $("update-check").onclick = () => checkForUpdate(true);
 $("repo-link").onclick = (e) => { e.preventDefault(); call("open_url", { url: `https://github.com/${state.repo || "SailHighSea/swiftdl"}` }); };
 $("open-logs").onclick = () => call("open_log_folder");
-$("set-devchannel").addEventListener("change", () => { state.update = null; renderUpdateStatus(); });
+$("set-devchannel").addEventListener("change", () => { update = null; renderUpdateStatus(); });
 // A few seconds after start, then every six hours while it's running.
 function scheduleUpdateChecks() {
-  const auto = () => { if (state.settings.autoUpdateCheck) checkForUpdate(false); };
+  const auto = () => { if (settings().autoUpdateCheck) { checkForUpdate(false); checkToolsUpdate(false); } };
   setTimeout(auto, 5000);
   setInterval(auto, 6 * 3600 * 1000);
 }
 
 // ---------- data ----------
-function ingest(items) {
+function ingest(items: Item[]) {
   // Torrents (also ones added before this category existed) get their own.
   for (const it of items) if (Array.isArray(it.torrentFiles)) it.category = "Torrents";
   state.items = items;
@@ -1077,6 +1104,33 @@ function ingest(items) {
   if (state.totalHist.length > HISTORY) state.totalHist.shift();
   render();
 }
+// Updates: check a few seconds after start, then twice a day. A dismissed
+// version stays quiet; the next one shows again.
+const SKIP_KEY = "swiftdl.skipUpdate";
+function renderUpdate(busy = false) {
+  const card = $("update");
+  let skipped = "";
+  try { skipped = localStorage.getItem(SKIP_KEY) || ""; } catch {}
+  card.hidden = !update || update.tag === skipped;
+  if (card.hidden || !update) return;
+  const install = update.asset ? (update.asset.endsWith(".exe") ? "Install and restart" : "Download") : "Get it";
+  card.innerHTML = `<span class="ob-icon">${icon("download")}</span>
+    <span class="ob-text"><b>SwiftDL ${esc(update.tag)} is available</b>${busy ? "Downloading the update…" : "You have " + esc(state.version)}</span>
+    <span class="ob-actions">${busy ? "" : `<button class="link-btn" data-notes>What's new</button><button class="link-btn" data-install>${install}</button><button class="sq-btn" data-skip title="Skip this version">${icon("x")}</button>`}</span>`;
+}
+$("update").addEventListener("click", async (e) => {
+  const b = (e.target as HTMLElement).closest("button");
+  if (!b || !update) return;
+  if (b.hasAttribute("data-notes")) invoke("open_url", { url: update.url });
+  else if (b.hasAttribute("data-skip")) {
+    try { localStorage.setItem(SKIP_KEY, update.tag); } catch {}
+    renderUpdate();
+  } else if (b.hasAttribute("data-install")) {
+    renderUpdate(true);
+    try { await invoke("install_update", { url: update.asset || update.url }); renderUpdate(); }
+    catch (err) { renderUpdate(); toast(`Update failed: ${err}`); }
+  }
+});
 async function boot() {
   hydrate();
   const s = await invoke("get_state");
@@ -1084,15 +1138,21 @@ async function boot() {
   window.setTheme(s.settings.theme);
   state.pending = s.pending;
   const info = await invoke("app_info").catch(() => null);
-  state.tag = info?.tag; state.repo = info?.repo;
+  state.tag = info?.tag ?? ""; state.repo = info?.repo ?? "";
+  state.version = s.version;
   $("version").textContent = `Version ${s.version}${info?.tag && info.tag !== `v${s.version}` ? ` (${info.tag})` : ""}`;
   if (info?.logFile) $("log-path").textContent = info.logFile;
-  if (/Windows/i.test(navigator.userAgent)) $("set-start-title").textContent = "Start with Windows"; else $("set-start-title").textContent = "Start when I sign in";
+  $("set-start-title").textContent = /Windows/i.test(navigator.userAgent) ? "Start with Windows" : "Start when I sign in";
   scheduleUpdateChecks();
   ingest(s.items);
   nextPending();
+  maybeWelcome();
   loadIntegration();
-  setInterval(loadIntegration, 15000);
+  // Every 2 s until a browser connects, so adding the extension shows up at
+  // once; after that a slow check is enough. Also on coming back to the window.
+  let tick = 0;
+  setInterval(() => { if (!state.integration?.lastSeen || ++tick % 8 === 0) loadIntegration(); }, 2000);
+  window.addEventListener("focus", () => loadIntegration());
   await listen("downloads", (e) => ingest(e.payload));
   await listen("incoming", () => invoke("get_state").then((s) => { state.pending.push(...s.pending); nextPending(); }));
   setInterval(() => {

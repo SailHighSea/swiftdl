@@ -21,6 +21,8 @@ pub struct Settings {
     pub offer_extension: bool,
     /// The user closed the "connect your browser" card.
     pub onboarding_dismissed: bool,
+    /// The first-run welcome screen has been shown.
+    pub welcome_done: bool,
     /// Open a small progress window for each download as it starts.
     pub show_progress_window: bool,
     /// Closing the main window keeps SwiftDL running in the tray.
@@ -52,6 +54,7 @@ impl Default for Settings {
             notify_on_complete: true,
             offer_extension: true,
             onboarding_dismissed: false,
+            welcome_done: false,
             show_progress_window: true,
             close_to_tray: true,
             theme: "system".into(),
