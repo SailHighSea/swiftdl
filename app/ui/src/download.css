@@ -120,12 +120,3 @@ button.t-pr:hover { background: var(--btn-bg); color: var(--text); }
 
 .add-err { margin: 16px 0 -6px; font-size: 13px; }
 
-/* App-styled dropdown (see styledSelect) */
-.dd { display: inline-flex; align-items: center; gap: 8px; height: 26px; max-width: 100%; padding: 0 8px; border-radius: 6px; background: var(--btn-bg); color: var(--text); font: inherit; }
-.dd:hover { background: var(--btn-hover); }
-.dd:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent); }
-.dd span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dd svg.ic { width: 12px; height: 12px; flex: none; color: var(--muted); transform: rotate(90deg); }
-/* Solid: the small window has text right under it. */
-.dd-menu { min-width: 160px; overflow-y: auto; background: var(--panel); border: 1px solid var(--border); backdrop-filter: none; }
-.dd-menu button.on { color: var(--text); background: var(--active); }

@@ -13,6 +13,9 @@ uses [Semantic Versioning](https://semver.org/).
   page's video, not an "up next" video linked near the player.
 
 ### Added
+- The video button's quality menu on YouTube and streams has a **More options…**
+  row that opens SwiftDL's New download window with every choice (video and
+  audio stream, codec, container, subtitles) instead of a fixed quality.
 - Video tools (yt-dlp, deno) are checked for newer releases along with app
   updates; a notice appears when one is available, and Settings has "Check for
   tool updates" and "Update tools" buttons.

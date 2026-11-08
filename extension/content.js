@@ -305,7 +305,15 @@
     const row = (q, i) => `<button class="qrow" data-q="${i}"><span>${q.label}</span><span class="sz">${q.size ? bytes(q.size) : ""}</span></button>`;
     const audio = qualities.findIndex((q) => q.label === "Audio only");
     panel.classList.add("q");
-    panel.innerHTML = qualities.map((q, i) => (i === audio ? `<div class="qsep"></div>` : "") + row(q, i)).join("");
+    // "More options": send the page without a chosen quality, so SwiftDL's
+    // own window opens with every choice (video and audio stream, codec,
+    // container, subtitles).
+    const more = `<div class="qsep"></div><button class="qrow" data-more><span>More options…</span><span class="sz">codec, format, subtitles</span></button>`;
+    panel.innerHTML = qualities.map((q, i) => (i === audio ? `<div class="qsep"></div>` : "") + row(q, i)).join("") + more;
+    panel.querySelector("[data-more]").addEventListener("click", (e) => {
+      e.stopPropagation();
+      grab(url, name);
+    });
     panel.querySelectorAll("[data-q]").forEach((b) => b.addEventListener("click", (e) => {
       e.stopPropagation();
       const pick = Number(b.dataset.q);
