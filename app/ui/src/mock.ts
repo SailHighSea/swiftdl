@@ -2,12 +2,13 @@
 // (no Tauri). Simulates downloads, including per-connection segments and
 // dynamic splitting, so the UI can be developed without building Rust.
 // In the real app this file does nothing.
-import type { Item, Settings, Status, Commands } from "./api";
+import type { Item, Settings, Status, Commands, Stream } from "./api";
 
 declare global { interface Window { __video?: unknown } }
 
 (() => {
   if (window.__TAURI__) return;
+  let toolsNote: string | null = null;
   // ?video: the launch film drives this page frame by frame (video/launch.html),
   // so nothing runs on timers and answers come back at once.
   const VIDEO = location.search.includes("video");
@@ -185,7 +186,6 @@ declare global { interface Window { __video?: unknown } }
     get_item: ({ id }) => JSON.parse(JSON.stringify(items.find((i) => i.id === id) || null)),
     confirm_info: () => (location.search.includes("torrent") ? { url: "magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Blender+Open+Movies", filename: "" } : VIDEO && !location.search.includes("yt") ? { url: "https://releases.ubuntu.com/26.04.1/ubuntu-26.04.1-desktop-amd64.iso", filename: "", referrer: "https://ubuntu.com/download/desktop" } : location.search.includes("yt") ? { url: "https://www.youtube.com/watch?v=aqz-KE-bpKQ", filename: "" } : { url: "https://cdn.example.net/releases/Obsidian-2.4.1-setup.exe", filename: "", referrer: "https://obsidian.example.net/download" }),
     forget_confirm: () => {}, probe_note: () => null, show_main: () => {},
-    check_update: () => ({ version: "0.3.2", page: "https://github.com/harshsinghsv/swiftdl/releases/latest", asset: null }),
     install_update: () => {},
     is_media_url: ({ url }) => /(^|\.)(youtube\.com|youtu\.be|vimeo\.com)\//.test(url.replace(/^https?:\/\//, "").replace(/^www\./, "")),
     open_new_download: () => {},
@@ -211,16 +211,16 @@ declare global { interface Window { __video?: unknown } }
         { id: "248", kind: "video", ext: "webm", videoCodec: "VP9", width: 1920, height: 1080, fps: 60, bitrate: 2400, size: 260 * MB, note: "1080p60" },
         { id: "18", kind: "both", ext: "mp4", videoCodec: "H.264", audioCodec: "AAC", width: 640, height: 360, fps: 30, bitrate: 600, size: 54 * MB, note: "360p" },
         { id: "251", kind: "audio", ext: "webm", audioCodec: "Opus", bitrate: 130, sampleRate: 48000, size: 10.2 * MB },
-        { id: "140", kind: "audio", ext: "m4a", audioCodec: "AAC", bitrate: 129, sampleRate: 44100, size: 9.8 * MB }] };
+        { id: "140", kind: "audio", ext: "m4a", audioCodec: "AAC", bitrate: 129, sampleRate: 44100, size: 9.8 * MB }] as unknown as Stream[] };
     },
     tools_status: () => ({ dir: "C:\\Users\\you\\AppData\\Roaming\\com.swiftdl.app\\tools", ytdlp: !location.search.includes("tools"), deno: !location.search.includes("tools"), ffmpeg: !location.search.includes("tools"), ffmpegDownloadable: true, portable: false }),
-    install_tools: async () => { for (let i = 1; i <= 10; i++) { window.__toolsNote = `Getting deno · ${i * 10}%`; await new Promise((r) => setTimeout(r, 250)); } window.__toolsNote = null; },
+    install_tools: async () => { for (let i = 1; i <= 10; i++) { toolsNote = `Getting deno · ${i * 10}%`; await new Promise((r) => setTimeout(r, 250)); } toolsNote = null; },
     check_tools_update: async () => location.search.includes("toolupdate") ? [{ name: "yt-dlp", current: "2025.01.01", latest: "2025.02.01" }] : [],
-    update_tools: async () => { for (let i = 1; i <= 10; i++) { window.__toolsNote = `Updating yt-dlp · ${i * 10}%`; await new Promise((r) => setTimeout(r, 200)); } window.__toolsNote = null; },
-    tools_note:() => window.__toolsNote || null,
+    update_tools: async () => { for (let i = 1; i <= 10; i++) { toolsNote = `Updating yt-dlp · ${i * 10}%`; await new Promise((r) => setTimeout(r, 200)); } toolsNote = null; },
+    tools_note:() => toolsNote || null,
     check_update: async ({ includeDev }) => {
       await new Promise((r) => setTimeout(r, 500));
-      return location.search.includes("update") ? { tag: includeDev ? "v0.4.0-dev1" : "v0.4.0", url: "https://github.com/SailHighSea/swiftdl/releases", prerelease: !!includeDev } : null;
+      return location.search.includes("update") ? { tag: includeDev ? "v0.4.0-dev1" : "v0.4.0", url: "https://github.com/SailHighSea/swiftdl/releases", prerelease: !!includeDev, asset: null } : null;
     },
     open_log_folder: () => {},
     app_info: () => ({ tag: "v0.3.1", repo: "SailHighSea/swiftdl", logFile: "C:\\Users\\you\\AppData\\Roaming\\com.swiftdl.app\\logs\\swiftdl.log" }),

@@ -30,6 +30,8 @@ export interface Item {
   connections: number;
   format: string | null;
   torrentFiles: number[] | null;
+  torrentPrio?: number[];
+  subtitles?: string | null;
   note: string | null;
   peers?: number | null;
   seeds?: number | null;
@@ -45,10 +47,15 @@ export interface Settings {
   notifyOnComplete: boolean;
   offerExtension: boolean;
   onboardingDismissed: boolean;
+  welcomeDone: boolean;
   showProgressWindow: boolean;
   closeToTray: boolean;
   theme: "system" | "light" | "dark" | string;
   seedUntil: "stop" | "1" | "2" | "forever" | string;
+  startWithSystem: boolean;
+  autoUpdateCheck: boolean;
+  includeDevBuilds: boolean;
+  debugLog: boolean;
 }
 
 export interface Incoming {
@@ -57,29 +64,42 @@ export interface Incoming {
   referrer?: string | null;
   cookies?: string | null;
   userAgent?: string | null;
+  /** "POST" when the page started the download with a form POST. */
+  method?: string | null;
+  body?: string | null;
+  contentType?: string | null;
   /** A video's qualities, read from the page by the extension. */
   qualities?: Quality[] | null;
   pick?: number | null;
 }
 
 export interface AppState { items: Item[]; settings: Settings; pending: Incoming[]; version: string }
-export interface UpdateInfo { version: string; page: string; asset: string | null }
+export interface UpdateInfo { tag: string; url: string; prerelease: boolean; asset: string | null }
+export interface ToolsStatus { dir: string; ytdlp: boolean; deno: boolean; ffmpeg: boolean; ffmpegDownloadable: boolean; portable: boolean }
+export interface ToolUpdate { name: string; current: string; latest: string }
 export interface ProbeInfo { filename: string; size: number | null; resumable: boolean; category: string; dir: string }
 export interface BrowserStatus { id: string; name: string; installed: boolean; autoOffer: boolean; lastSeen?: number | null }
 export interface IntegrationStatus { browsers: BrowserStatus[]; lastSeen: number | null; storeUrl: string; storeAvailable: boolean }
 export interface Quality { label: string; format: string; ext: string; size: number | null }
-export interface MediaInfo { title: string; site: string; duration: number | null; qualities: Quality[] }
+export interface Stream {
+  id: string; kind: "video" | "audio" | "both"; ext: string; videoCodec: string | null; audioCodec: string | null;
+  width: number | null; height: number | null; fps: number | null; bitrate: number | null; sampleRate: number | null;
+  size: number | null; note: string;
+}
+export interface Subtitle { code: string; name: string; auto: boolean }
+export interface MediaInfo { title: string; site: string; duration: number | null; qualities: Quality[]; streams: Stream[]; subtitles: Subtitle[] }
 export interface TorrentInfo { name: string; size: number; files: { path: string; size: number }[] }
 export interface AddRequest {
   url: string; filename: string; dir: string; headers?: Header[]; start: boolean;
   window?: string | null; format?: string | null; size?: number | null; torrentFiles?: number[] | null;
+  torrentPrio?: number[]; subtitles?: string | null;
 }
 
 type Ids = { ids: number[] };
 type Browser = { browser: string };
 export interface Commands {
   get_state: [void, AppState];
-  probe_url: [{ url: string; headers: Header[] }, ProbeInfo];
+  probe_url: [{ url: string; headers: Header[]; filename?: string | null }, ProbeInfo];
   probe_media: [{ url: string; headers: Header[] }, MediaInfo];
   probe_note: [void, string | null];
   is_media_url: [{ url: string }, boolean];
@@ -106,7 +126,14 @@ export interface Commands {
   confirm_info: [{ token: number }, Incoming | null];
   forget_confirm: [{ token: number }, void];
   show_main: [void, void];
-  check_update: [void, UpdateInfo | null];
+  check_update: [{ includeDev: boolean }, UpdateInfo | null];
+  tools_status: [void, ToolsStatus];
+  install_tools: [void, void];
+  update_tools: [void, void];
+  check_tools_update: [void, ToolUpdate[]];
+  tools_note: [void, string | null];
+  open_log_folder: [void, void];
+  app_info: [void, { tag: string; repo: string; logFile: string }];
   install_update: [{ url: string }, void];
 }
 export interface Events {
