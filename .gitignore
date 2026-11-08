@@ -7,3 +7,5 @@ node_modules/
 
 # Notes for Claude, local only
 CLAUDE.md
+node_modules/
+dist/

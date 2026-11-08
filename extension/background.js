@@ -39,7 +39,7 @@ async function cookieHeader(url) {
   }
 }
 
-async function sendToApp({ url, referrer, filename, post }) {
+async function sendToApp({ url, referrer, filename, post, qualities, pick }) {
   const message = {
     type: "download",
     url,
@@ -48,8 +48,20 @@ async function sendToApp({ url, referrer, filename, post }) {
     cookies: await cookieHeader(url),
     userAgent: navigator.userAgent,
     ...(post ? { method: "POST", body: post.body, contentType: post.contentType } : {}),
+    // A video's qualities, read from the page, so the app needn't look them up.
+    ...(qualities ? { qualities, pick } : {}),
   };
-  const reply = await chrome.runtime.sendNativeMessage(HOST, message);
+  // The browser starts SwiftDL for this message even when the app is
+  // closed. A start that fails once (the computer is busy, an update is
+  // still being written) usually works a moment later, so try twice.
+  let reply;
+  try {
+    reply = await chrome.runtime.sendNativeMessage(HOST, message);
+  } catch (e) {
+    await log(`native host failed, retrying: ${e?.message || e}`);
+    await new Promise((r) => setTimeout(r, 800));
+    reply = await chrome.runtime.sendNativeMessage(HOST, message);
+  }
   if (!reply?.ok) throw new Error(reply?.error || "SwiftDL did not accept the download");
 }
 
@@ -246,10 +258,117 @@ chrome.webRequest.onResponseStarted.addListener(
     list.unshift({ url, kind, mime, size, at: Date.now() });
     await chrome.storage.session.set({ [key(d.tabId)]: list.slice(0, 25) });
     refreshBadge(d.tabId);
+    // Read a stream's qualities now, while the video plays, so the menu has
+    // them the moment it opens. (Our own fetch has no tab, so it isn't caught.)
+    if (kind === "hls" || kind === "dash") {
+      streamQualities(url).then(async (qualities) => {
+        if (!qualities) return;
+        const { [key(d.tabId)]: now = [] } = await chrome.storage.session.get(key(d.tabId));
+        const item = now.find((m) => m.url === url);
+        if (!item) return;
+        item.qualities = qualities;
+        await chrome.storage.session.set({ [key(d.tabId)]: now });
+      }).catch(() => {});
+    }
   },
   { urls: ["http://*/*", "https://*/*"], types: ["media", "xmlhttprequest", "other", "object"] },
   ["responseHeaders"],
 );
+
+// ---------- reading a stream's qualities (HLS) ----------
+// The player already loaded this playlist; reading it again takes a moment
+// and tells us every quality, so the menu can show them at once. Each choice
+// carries the exact playlists for the app's own downloader.
+
+const hlsAttr = (line, name) => {
+  const m = new RegExp(`(?:^|[:,])${name}=("([^"]*)"|[^,]*)`, "i").exec(line);
+  return m ? (m[2] ?? m[1]) : null;
+};
+
+async function streamQualities(url) {
+  const get = async (u) => {
+    const r = await fetch(u, { credentials: "include" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.text();
+  };
+  const text = await get(url);
+  if (/<MPD[\s>]/.test(text)) return dashQualities(text, url);
+  if (!text.trimStart().startsWith("#EXTM3U")) return null;
+  const lines = text.split(/\r?\n/).map((l) => l.trim());
+  const abs = (u) => new URL(u, url).href;
+  // One playlist, no choices: download it as it is.
+  if (!lines.some((l) => l.startsWith("#EXT-X-STREAM-INF"))) {
+    return [{ label: "Original", format: `hls|${url}|`, ext: "mp4", size: null }];
+  }
+  const audio = {};
+  for (const l of lines.filter((l) => l.startsWith("#EXT-X-MEDIA") && /TYPE=AUDIO/i.test(l))) {
+    const g = hlsAttr(l, "GROUP-ID"), u = hlsAttr(l, "URI");
+    if (g && u && (!audio[g] || /DEFAULT=YES/i.test(l))) audio[g] = abs(u);
+  }
+  const variants = [];
+  lines.forEach((l, i) => {
+    if (!l.startsWith("#EXT-X-STREAM-INF")) return;
+    const uri = lines.slice(i + 1).find((x) => x && !x.startsWith("#"));
+    if (!uri) return;
+    const res = hlsAttr(l, "RESOLUTION");
+    const height = res ? Number(res.split("x")[1]) || 0 : 0;
+    const bw = Number(hlsAttr(l, "AVERAGE-BANDWIDTH") || hlsAttr(l, "BANDWIDTH")) || 0;
+    const fps = Number(hlsAttr(l, "FRAME-RATE")) || 0;
+    const group = hlsAttr(l, "AUDIO");
+    variants.push({ height, bw, fps, video: abs(uri), audio: group ? audio[group] || "" : "" });
+  });
+  // Best first; one entry per height (the highest bitrate at that height).
+  variants.sort((a, b) => b.height - a.height || b.bw - a.bw);
+  const seen = new Set();
+  const picked = variants.filter((v) => { const k = v.height || v.bw; if (seen.has(k)) return false; seen.add(k); return true; });
+  if (!picked.length) return null;
+  // Length of the video, from one of its playlists, to estimate sizes.
+  let secs = 0;
+  try {
+    secs = (await get(picked[picked.length - 1].video)).split(/\r?\n/)
+      .filter((l) => l.startsWith("#EXTINF:")).reduce((s, l) => s + (parseFloat(l.slice(8)) || 0), 0);
+  } catch { secs = 0; }
+  return picked.map((v) => ({
+    label: v.height ? `${v.height}p${v.fps > 30.5 ? Math.round(v.fps) : ""}` : `${Math.round(v.bw / 1000)} kbps`,
+    format: `hls|${v.video}|${v.audio}`,
+    ext: "mp4",
+    size: secs && v.bw ? Math.round((v.bw * secs) / 8) : null,
+  }));
+}
+
+// A DASH manifest's qualities. No XML parser in a service worker, but the
+// attributes needed here are plain enough to read directly.
+function dashQualities(xml, url) {
+  if (/<MPD[^>]*type="dynamic"/.test(xml)) return null; // live
+  const iso = (s) => { const m = /P(?:(\d+)D)?T?(?:([\d.]+)H)?(?:([\d.]+)M)?(?:([\d.]+)S)?/.exec(s || ""); return m ? (+m[1] || 0) * 86400 + (+m[2] || 0) * 3600 + (+m[3] || 0) * 60 + (+m[4] || 0) : 0; };
+  const secs = iso((/mediaPresentationDuration="([^"]+)"/.exec(xml) || [])[1]);
+  const at = (tag, name) => { const m = new RegExp(`\\s${name}="([^"]*)"`).exec(tag); return m ? m[1] : ""; };
+  // Frame rates may be fractions: "30000/1001", "12800/512".
+  const rate = (s) => { const [n, d] = String(s || "").split("/").map(Number); return n ? n / (d || 1) : 0; };
+  const video = [], audio = [];
+  // Each adaptation set, then its tracks; a track inherits its set's type.
+  for (const set of xml.split(/<AdaptationSet\b/).slice(1)) {
+    const head = set.slice(0, set.indexOf(">") + 1);
+    const setType = at(head, "contentType") || at(head, "mimeType");
+    for (const m of set.matchAll(/<Representation\b[^>]*>/g)) {
+      const r = m[0], kind = `${at(r, "mimeType") || setType} ${at(r, "codecs") || at(head, "codecs")}`;
+      const t = { id: at(r, "id"), bw: +at(r, "bandwidth") || 0, height: +at(r, "height") || +at(head, "height") || 0, fps: rate(at(r, "frameRate") || at(head, "frameRate")) };
+      if (!t.id || /text|wvtt|stpp|ttml|image/i.test(kind)) continue;
+      if (/audio|mp4a|opus|ac-3|ec-3/i.test(kind)) audio.push(t); else if (/video|avc|hvc|hev|vp0?9|av01/i.test(kind) || t.height) video.push(t);
+    }
+  }
+  const a = audio.sort((x, y) => y.bw - x.bw)[0];
+  video.sort((x, y) => y.height - x.height || y.bw - x.bw);
+  const seen = new Set();
+  const list = video.filter((v) => !seen.has(v.height) && seen.add(v.height)).map((v) => ({
+    label: v.height ? `${v.height}p${v.fps > 30.5 ? Math.round(v.fps) : ""}` : `${Math.round(v.bw / 1000)} kbps`,
+    format: `dash|${url}|${v.id}|${a ? a.id : ""}`,
+    ext: "mp4",
+    size: secs ? Math.round(((v.bw + (a?.bw || 0)) * secs) / 8) : null,
+  }));
+  if (a) list.push({ label: "Audio only", format: `dash|${url}||${a.id}`, ext: "m4a", size: secs ? Math.round((a.bw * secs) / 8) : null });
+  return list.length ? list : null;
+}
 
 async function mediaFor(tabId) {
   const { [key(tabId)]: list = [] } = await chrome.storage.session.get(key(tabId));
@@ -258,9 +377,11 @@ async function mediaFor(tabId) {
 
 async function refreshBadge(tabId) {
   if (tabId == null) { chrome.action.setBadgeText({ text: "" }); return; }
-  const files = (await mediaFor(tabId)).filter((m) => m.kind === "file").length;
+  // Files, plus one for a stream (its playlists are one video).
+  const media = await mediaFor(tabId);
+  const count = media.filter((m) => m.kind === "file").length + (media.some((m) => m.kind !== "file") ? 1 : 0);
   chrome.action.setBadgeBackgroundColor({ color: "#0a84ff", tabId });
-  chrome.action.setBadgeText({ text: files ? String(files) : "", tabId });
+  chrome.action.setBadgeText({ text: count ? String(count) : "", tabId });
 }
 
 // A new page in the tab starts a fresh list.
@@ -279,6 +400,12 @@ function createMenus() {
 }
 chrome.runtime.onInstalled.addListener(() => { createMenus(); ping(); });
 chrome.runtime.onStartup.addListener(() => { createMenus(); ping(); });
+// Also check in whenever the extension loads (added, reloaded or turned back
+// on), so the app notices the connection right away. Session storage is
+// cleared when the extension is reloaded or turned off, so this runs once per load.
+chrome.storage.session.get("checkedIn").then(({ checkedIn }) => {
+  if (!checkedIn) chrome.storage.session.set({ checkedIn: true }).then(ping);
+}).catch(() => {});
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const url = info.linkUrl || info.srcUrl;
@@ -302,9 +429,16 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
       case "ping": return ping();
       case "bypass": bypassUntil = Date.now() + 4000; return { ok: true };
       case "media": return { items: await mediaFor(tabId), disabled: await siteDisabled(pageUrl) };
+      case "prepare":
+        try {
+          await chrome.runtime.sendNativeMessage(HOST, { type: "prepare", url: msg.url, referrer: pageUrl, cookies: await cookieHeader(msg.url), userAgent: navigator.userAgent });
+        } catch { /* only a head start; the download works without it */ }
+        return { ok: true };
+      case "streamQualities":
+        try { return { qualities: await streamQualities(msg.url) }; } catch (e) { return { qualities: null, error: String(e?.message || e) }; }
       case "grab":
         try {
-          await sendToApp({ url: msg.url, referrer: pageUrl, filename: msg.filename });
+          await sendToApp({ url: msg.url, referrer: pageUrl, filename: msg.filename, qualities: msg.qualities, pick: msg.pick });
           return { ok: true };
         } catch (e) {
           return { ok: false, error: String(e?.message || e) };

@@ -217,6 +217,20 @@ pub fn open_store(m: Mgr, browser: String) -> Result<(), String> {
     crate::browser::open_store_in(m.app_handle(), &browser).map_err(|e| format!("{e:#}"))
 }
 
+/// Opens the log file in the system's text viewer, for bug reports.
+#[tauri::command]
+pub fn open_log(m: Mgr) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let p = crate::applog::file();
+    if !p.exists() { crate::applog::line("log opened"); }
+    m.app_handle().opener().open_path(p.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn open_extensions_page(browser: String) -> Result<(), String> {
+    crate::browser::open_extensions_page(&browser).map_err(|e| format!("{e:#}"))
+}
+
 /// Runs off the main thread (async command), so the blocking picker is safe.
 #[tauri::command]
 pub async fn pick_folder(m: Mgr<'_>, start: Option<PathBuf>) -> Result<Option<PathBuf>, String> {
@@ -243,17 +257,22 @@ pub fn is_media_url(url: String) -> bool {
     crate::media::is_media_url(url.trim())
 }
 
+/// What the video lookup is doing, when it is more than reading the page.
 #[tauri::command]
-pub async fn probe_media(m: Mgr<'_>, url: String, cookies: Option<String>) -> Result<crate::media::MediaInfo, String> {
-    crate::media::probe(m.client(), url.trim(), cookies).await.map_err(|e| format!("{e:#}"))
+pub fn probe_note() -> Option<String> {
+    crate::media::PROBE_NOTE.lock().unwrap().clone()
+}
+
+#[tauri::command]
+pub async fn probe_media(m: Mgr<'_>, url: String, headers: Vec<(String, String)>) -> Result<crate::media::MediaInfo, String> {
+    crate::media::probe(m.client(), url.trim(), headers).await.map_err(|e| format!("{e:#}"))
 }
 
 /// A video-site link pasted into the main window: choose its quality in a
 /// "New download" window, like a link caught from the browser.
 #[tauri::command]
-pub async fn open_new_download(m: Mgr<'_>, url: String) -> Result<(), String> {
-    m.new_download_window(Incoming { url: url.trim().to_string(), filename: None, referrer: None, cookies: None, user_agent: None, method: None, body: None, content_type: None });
-    Ok(())
+pub fn open_new_download(m: Mgr, url: String) {
+    m.new_download_window(Incoming { url: url.trim().to_string(), filename: None, referrer: None, cookies: None, user_agent: None, method: None, body: None, content_type: None, qualities: None, pick: None });
 }
 
 #[tauri::command]
@@ -283,4 +302,21 @@ pub async fn update_tools(m: Mgr<'_>) -> Result<(), String> {
 #[tauri::command]
 pub fn tools_note() -> Option<String> {
     crate::media::SETUP_NOTE.lock().unwrap().clone()
+}
+
+/// Installs a release: on Windows downloads and runs the installer, then quits
+/// so it can replace this app; elsewhere opens the download in the browser.
+#[tauri::command]
+pub async fn install_update(m: Mgr<'_>, url: String) -> Result<(), String> {
+    if cfg!(windows) && url.ends_with(".exe") {
+        crate::updater::run_installer(m.client(), &url).await.map_err(|e| {
+            crate::applog::line(&format!("update install failed: {e:#}"));
+            format!("{e:#}")
+        })?;
+        m.save();
+        m.app_handle().exit(0);
+        Ok(())
+    } else {
+        m.app_handle().opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+    }
 }

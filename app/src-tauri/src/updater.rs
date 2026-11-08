@@ -30,6 +30,26 @@ struct Release {
     html_url: String,
     draft: bool,
     prerelease: bool,
+    #[serde(default)]
+    assets: Vec<Asset>,
+}
+
+#[derive(Deserialize)]
+struct Asset {
+    name: String,
+    browser_download_url: String,
+}
+
+/// This platform's installer among a release's files.
+fn pick_asset(assets: &[Asset]) -> Option<String> {
+    let suffix = if cfg!(windows) {
+        "-setup.exe"
+    } else if cfg!(target_os = "macos") {
+        ".dmg"
+    } else {
+        return None; // Linux: .deb, .rpm or AppImage; the user picks on the release page.
+    };
+    assets.iter().find(|a| a.name.ends_with(suffix)).map(|a| a.browser_download_url.clone())
 }
 
 #[derive(Serialize)]
@@ -38,6 +58,8 @@ pub struct UpdateInfo {
     pub tag: String,
     pub url: String,
     pub prerelease: bool,
+    /// This platform's installer, when the release has one.
+    pub asset: Option<String>,
 }
 
 /// The newest release for this channel if it's newer than the running build.
@@ -62,7 +84,27 @@ pub async fn check(client: &Client, include_dev: bool) -> Result<Option<UpdateIn
         .filter(|r| !r.draft && (include_dev || !r.prerelease))
         .filter_map(|r| key(&r.tag_name).map(|k| (k, r)))
         .max_by_key(|(k, _)| *k);
-    Ok(best.filter(|(k, _)| Some(*k) > current).map(|(_, r)| UpdateInfo { tag: r.tag_name, url: r.html_url, prerelease: r.prerelease }))
+    Ok(best.filter(|(k, _)| Some(*k) > current).map(|(_, r)| UpdateInfo { asset: pick_asset(&r.assets), tag: r.tag_name, url: r.html_url, prerelease: r.prerelease }))
+}
+
+/// Downloads the Windows installer and starts it. The caller then quits the
+/// app so the installer can replace it; `/P` shows only a progress bar, `/UPDATE` keeps
+/// the user's shortcuts, and `/R` starts SwiftDL again afterwards.
+#[cfg(windows)]
+pub async fn run_installer(client: &Client, url: &str) -> Result<()> {
+    if !url.starts_with(&format!("https://github.com/{REPO}/releases/download/")) {
+        bail!("refusing to install from {url}");
+    }
+    let bytes = client.get(url).header("User-Agent", "SwiftDL").send().await?.error_for_status()?.bytes().await?;
+    let path = std::env::temp_dir().join(url.rsplit('/').next().unwrap_or("SwiftDL-setup.exe"));
+    std::fs::write(&path, &bytes).with_context(|| format!("could not save {}", path.display()))?;
+    std::process::Command::new(&path).args(["/P", "/R", "/UPDATE"]).spawn().context("could not start the installer")?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub async fn run_installer(_client: &Client, _url: &str) -> Result<()> {
+    bail!("installing in place is only supported on Windows")
 }
 
 #[cfg(test)]

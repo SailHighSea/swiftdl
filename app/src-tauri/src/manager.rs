@@ -99,6 +99,13 @@ pub struct Incoming {
     pub body: Option<String>,
     #[serde(default)]
     pub content_type: Option<String>,
+    /// A video's qualities, read by the extension from the page itself, so
+    /// the New download window can show them without asking yt-dlp.
+    #[serde(default)]
+    pub qualities: Option<Vec<crate::media::Quality>>,
+    /// Which of `qualities` the user clicked.
+    #[serde(default)]
+    pub pick: Option<usize>,
 }
 
 /// Pseudo-headers that carry a POST download's method and body along with
@@ -386,7 +393,14 @@ impl DownloadManager {
 
     /// A download arrived from the browser extension. Like IDM, it gets its
     /// own small "New download" window rather than the main window.
+    /// Starts looking a YouTube video up, so its download starts at once.
+    pub fn prepare(self: &Arc<Self>, inc: &Incoming) {
+        let (client, url, headers) = (self.client.clone(), inc.url.clone(), inc.headers());
+        tauri::async_runtime::spawn(async move { crate::media::prepare(&client, &url, headers).await });
+    }
+
     pub fn incoming(self: &Arc<Self>, inc: Incoming) {
+        self.prepare(&inc);
         // Video sites always ask: there's a quality to choose.
         if self.settings().ask_before_download || crate::media::is_media_url(&inc.url) || crate::torrent::is_torrent(&inc.url, inc.filename.as_deref()) {
             self.new_download_window(inc);
@@ -520,9 +534,21 @@ impl DownloadManager {
             let this = self.clone();
             tauri::async_runtime::spawn(async move {
                 let result = match kind {
+                    // A stream picked in the extension: our own downloader.
+                    Kind::Media(format, _) if crate::stream::parse_format(&format).is_some() => {
+                        let (video, audio) = match crate::stream::parse_format(&format).unwrap_or_default() {
+                            // Audio only: the sound track is the one to download.
+                            (None, Some(a)) => (Some(a), None),
+                            other => other,
+                        };
+                        let job = crate::stream::Job { video: video.unwrap_or_else(|| req.url.clone()), audio, dest: req.dest.clone(), headers: req.headers.clone() };
+                        crate::stream::run(&this.client, job, progress, note, cancel).await
+                    }
                     Kind::Media(format, subs) => {
-                        let cookies = req.headers.get("cookie").and_then(|v| v.to_str().ok()).map(str::to_string);
-                        let job = crate::media::Job { url: req.url.clone(), format, subs, dest: req.dest.clone(), cookies };
+                        let headers = req.headers.iter()
+                            .filter_map(|(k, v)| Some((k.as_str().to_string(), v.to_str().ok()?.to_string())))
+                            .collect();
+                        let job = crate::media::Job { url: req.url.clone(), format, subs, dest: req.dest.clone(), headers };
                         crate::media::run(&this.client, job, progress, note, cancel).await
                     }
                     Kind::Torrent(files, prio) => {
@@ -584,6 +610,7 @@ impl DownloadManager {
                             crate::applog::info(format!("download failed: {} ({}): {e:#}", item.filename, item.url));
                             item.status = Status::Error;
                             item.error = Some(format!("{e:#}"));
+                            crate::applog::line(&format!("download {} failed ({}): {e:#}", item.filename, item.url));
                         }
                     }
                 }

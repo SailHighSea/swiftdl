@@ -10,6 +10,7 @@ mod media;
 mod native_host;
 mod settings;
 mod torrent;
+mod stream;
 mod updater;
 mod windows;
 
@@ -71,7 +72,9 @@ fn main() {
         // Must be first: a second launch (e.g. from the extension) hands its
         // args to this window and exits.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if let Some(inc) = native_host::parse_add_arg(&args).or_else(|| torrent::parse_open_arg(&args)) {
+            if let Some(inc) = native_host::parse_prepare_arg(&args) {
+                app.state::<Arc<DownloadManager>>().prepare(&inc);
+            } else if let Some(inc) = native_host::parse_add_arg(&args).or_else(|| torrent::parse_open_arg(&args)) {
                 app.state::<Arc<DownloadManager>>().incoming(inc);
             } else {
                 show_main_window(app);
@@ -81,6 +84,7 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .setup(move |app| {
+            applog::line(&format!("SwiftDL {} starting on {} {}", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH));
             let data_dir = browser::data_dir();
             let downloads = app.path().download_dir().unwrap_or_else(|_| data_dir.join("Downloads"));
             let mgr = DownloadManager::new(app.handle().clone(), data_dir.clone(), downloads)?;
@@ -113,6 +117,11 @@ fn main() {
             // Launched by the browser extension: show only the small
             // download window, like IDM. Started at sign-in: stay in the
             // tray. Otherwise open the main window.
+            // Started only to look a video up: stay out of sight (tray).
+            if let Some(inc) = native_host::parse_prepare_arg(&args) {
+                mgr.prepare(&inc);
+                return Ok(());
+            }
             match native_host::parse_add_arg(&args).or_else(|| torrent::parse_open_arg(&args)) {
                 Some(inc) => mgr.incoming(inc),
                 None if tray_ok && args.iter().any(|a| a == autostart::HIDDEN_ARG) => {}
@@ -129,6 +138,7 @@ fn main() {
             commands::tools_note,
             commands::check_tools_update,
             commands::update_tools,
+            commands::probe_note,
             commands::is_media_url,
             commands::is_torrent_url,
             commands::probe_torrent,
@@ -144,6 +154,8 @@ fn main() {
             commands::open_url,
             commands::extension_dir,
             commands::open_extension_folder,
+            commands::open_extensions_page,
+            commands::open_log,
             commands::pick_folder,
             commands::integration_status,
             commands::open_store,
@@ -154,6 +166,7 @@ fn main() {
             commands::check_update,
             commands::open_log_folder,
             commands::app_info,
+            commands::install_update,
         ])
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } if window.label() == "main" => {
@@ -181,7 +194,7 @@ fn main() {
                     };
                     if let (Some(link), Some(mgr)) = (link, _app.try_state::<Arc<DownloadManager>>()) {
                         if torrent::is_torrent(&link, None) {
-                            mgr.incoming(manager::Incoming { url: link, filename: None, referrer: None, cookies: None, user_agent: None, method: None, body: None, content_type: None });
+                            mgr.incoming(manager::Incoming { url: link, filename: None, referrer: None, cookies: None, user_agent: None, method: None, body: None, content_type: None, qualities: None, pick: None });
                         }
                     }
                 }

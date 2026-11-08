@@ -4,9 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SwiftDL</title>
-  <script src="theme.js"></script>
-  <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="themes.css">
 </head>
 <body>
   <div class="app">
@@ -47,6 +44,7 @@
       </header>
       <div class="body">
         <div class="list" id="list">
+          <div class="onboard" id="update" hidden></div>
           <div class="onboard" id="onboard" hidden></div>
           <div id="rows"></div>
           <div class="empty" id="empty" hidden>
@@ -161,17 +159,10 @@
           <p class="lead">The extension sends browser downloads to SwiftDL, with your cookies so downloads behind a login work, and adds a download button to videos.</p>
           <div class="ext-status" id="ext-status"></div>
           <div class="set-group" id="browser-list"></div>
+          <p class="set-note" id="ext-saveas" hidden>Browser still asks where to save? Turn off <b>Ask where to save each file before downloading</b> in its download settings, so only SwiftDL asks.</p>
           <div class="set-group">
             <label class="set-row"><div class="sr-text"><b>Offer the extension automatically</b><span>Supported browsers ask once, the next time they start</span></div><span class="switch"><input type="checkbox" id="set-offer"><i></i></span></label>
           </div>
-          <details class="manual">
-            <summary>Install manually</summary>
-            <div class="set-group steps">
-              <div class="set-row"><span class="step">1</span><div class="sr-text"><b>Open the extensions page</b><span><code>chrome://extensions</code> or <code>edge://extensions</code></span></div></div>
-              <div class="set-row"><span class="step">2</span><div class="sr-text"><b>Turn on Developer mode</b><span>Top-right corner of the page</span></div></div>
-              <div class="set-row"><span class="step">3</span><div class="sr-text"><b>Load unpacked</b><span>Choose the SwiftDL extension folder</span></div><button type="button" class="btn sm" id="set-ext-folder">Open folder</button></div>
-            </div>
-          </details>
         </section>
         <section data-panel="about" hidden>
           <div class="about"><img src="logo.svg" alt="" width="64" height="64"><h2>SwiftDL</h2><p id="version"></p><p class="muted">Fast, resumable downloads with many connections at once.<br>Free and open source.</p>
@@ -215,15 +206,16 @@
   <dialog id="dlg-ext" class="modal guide">
     <form method="dialog">
       <h3>Add the browser extension</h3>
-      <p class="muted">The extension came with SwiftDL. Add it to Chrome, Edge, Brave or Vivaldi in four steps (Firefox is below).</p>
+      <p class="muted">The extension came with SwiftDL. Add it in four steps; this window notices as soon as it connects.</p>
       <ol class="guide-steps">
-        <li><span class="step">1</span><div><b>Open the extensions page</b><span>Type <code>chrome://extensions</code> in the address bar (Edge: <code>edge://extensions</code>)</span></div></li>
+        <li><span class="step">1</span><div><b>Open the extensions page</b><span id="ext-step1">Type <code>chrome://extensions</code> in the address bar</span><span class="guide-browsers" id="ext-browsers"></span></div></li>
         <li><span class="step">2</span><div><b>Turn on Developer mode</b><span>The switch is in the top-right corner of that page</span></div></li>
         <li><span class="step">3</span><div><b>Click Load unpacked</b><span>A folder picker opens</span></div></li>
-        <li><span class="step">4</span><div><b>Choose SwiftDL's extension folder</b><span class="guide-path"><code id="ext-path">…</code><button type="button" class="sq-btn" id="ext-copy" title="Copy path"></button></span></div></li>
+        <li><span class="step">4</span><div><b>Choose SwiftDL's extension folder</b><span>The path is already copied, so paste it into the picker</span><span class="guide-path"><code id="ext-path">…</code><button type="button" class="sq-btn" id="ext-copy" title="Copy path"></button></span></div></li>
       </ol>
+      <p class="guide-wait" id="ext-wait">Waiting for the extension to connect…</p>
       <p class="guide-note">Use this folder rather than a downloaded copy: it stays in place while SwiftDL is installed and is refreshed when SwiftDL updates.</p>
-      <p class="guide-note"><b>Firefox:</b> open <code>about:debugging</code>, choose <b>This Firefox</b>, click <b>Load Temporary Add-on</b> and pick <code>manifest.json</code> in <code id="ext-path-ff">…</code>. Firefox removes temporary add-ons when it restarts, until SwiftDL is on Firefox Add-ons.</p>
+      <p class="guide-note"><b>Firefox:</b> get it from <a href="#" id="ext-ff-store">Firefox Add-ons</a> instead.</p>
       <div class="confirm-foot">
         <button value="close" class="btn">Done</button>
         <button type="button" class="btn primary" id="ext-open">Open extension folder</button>
@@ -245,7 +237,6 @@
 
   <div id="menu" class="menu" hidden></div>
 
-  <script src="mock.js"></script>
-  <script type="module" src="app.js"></script>
+  <script type="module" src="./src/main.ts"></script>
 </body>
 </html>

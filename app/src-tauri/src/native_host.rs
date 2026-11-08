@@ -58,6 +58,8 @@ fn handle(msg: &[u8]) -> Value {
         Some("ping") => json!({ "ok": true, "version": env!("CARGO_PKG_VERSION") }),
         Some("download") if v["url"].is_string() => reply(send_download(msg)),
         Some("show") => reply(launch_app(&[])),
+        // The quality menu opened on a video: start looking it up now.
+        Some("prepare") if v["url"].is_string() => reply(launch_app(&["--prepare", &URL_SAFE_NO_PAD.encode(msg)])),
         _ => json!({ "ok": false, "error": "unknown message" }),
     }
 }
@@ -249,6 +251,13 @@ mod process_tree {
             (ok != 0).then(|| String::from_utf16_lossy(&buf[..len as usize]))
         }
     }
+}
+
+/// Pulls the `--prepare <payload>` the host passed on, if any.
+pub fn parse_prepare_arg(args: &[String]) -> Option<crate::manager::Incoming> {
+    let i = args.iter().position(|a| a == "--prepare")?;
+    let raw = URL_SAFE_NO_PAD.decode(args.get(i + 1)?).ok()?;
+    serde_json::from_slice(&raw).ok()
 }
 
 /// Pulls the `--add <payload>` the host passed on, if any.
