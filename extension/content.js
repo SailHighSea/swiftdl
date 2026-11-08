@@ -82,7 +82,7 @@
     }
     return location.href;
   }
-  const LOGO = `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="1.5" y="1.5" width="21" height="21" rx="6" fill="#2a2c32"/><path d="M8 7l4 4 4-4" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity=".55"/><path d="M8 11.3l4 4 4-4" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/><rect x="7.6" y="17" width="8.8" height="1.9" rx=".95" fill="#fff"/></svg>`;
+  const LOGO = `<svg viewBox="0 0 64 64" width="16" height="16" aria-hidden="true"><rect width="64" height="64" rx="14.5" fill="#24262b"/><g fill="#fff" transform="translate(13 13) scale(1.1875)"><rect x="4.5" y="3" width="4.4" height="12" rx="2.2"/><rect x="10.9" y="3" width="4.4" height="17" rx="2.2"/><rect x="16.7" y="3" width="4.4" height="17" rx="2.2"/><rect x="23.1" y="3" width="4.4" height="12" rx="2.2"/><path d="M6 21.5 16 28l10-6.5" fill="none" stroke="#fff" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/></g></svg>`;
 
   let host, root, wrap, btn, panel, video = null, hideTimer = 0, raf = 0, open = false;
 
@@ -104,7 +104,7 @@
       .btn:hover { background: rgba(30, 31, 38, .94); box-shadow: 0 0 0 2px #60a5fa, 0 6px 20px rgba(0,0,0,.35); }
       .btn .chev { opacity: .6; margin-left: 2px; transition: transform .15s; }
       .wrap.open .btn .chev { transform: rotate(180deg); }
-      .panel { width: 320px; max-height: 300px; overflow: auto; padding: 6px; border-radius: 12px; background: rgba(22, 23, 28, .94); color: #eef0f3;
+      .panel { width: 320px; padding: 6px; border-radius: 12px; background: rgba(22, 23, 28, .94); color: #eef0f3;
         box-shadow: 0 0 0 1px rgba(255,255,255,.1), 0 16px 48px rgba(0,0,0,.5); backdrop-filter: blur(18px) saturate(1.5); display: none; }
       .wrap.open .panel { display: block; animation: pop .14s ease-out; }
       @keyframes pop { from { opacity: 0; transform: translateY(-4px); } }
@@ -119,6 +119,12 @@
       .meta { flex: 1; min-width: 0; }
       .meta b { display: block; font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .meta span { display: block; margin-top: 1px; font-size: 11.5px; color: #8a8e98; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      /* quality list: one short row each, size on the right */
+      .panel.q { width: 210px; }
+      .qrow { display: flex; align-items: baseline; gap: 12px; width: 100%; height: 30px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: #eef0f3; cursor: pointer; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; align-items: center; }
+      .qrow:hover { background: rgba(255,255,255,.08); }
+      .qrow .sz { margin-left: auto; font-weight: 500; font-size: 12px; color: #8a8e98; }
+      .qsep { height: 1px; margin: 4px 6px; background: rgba(255,255,255,.08); }
       .msg { padding: 10px 8px 12px; font-size: 12.5px; color: #a4a8b1; line-height: 1.5; }
       .msg.ok { color: #4cb782; } .msg.err { color: #eb6b6b; }
     </style>
@@ -160,21 +166,46 @@
     wrap.style.top = `${Math.max(8, r.top + 10)}px`;
     raf = requestAnimationFrame(position);
   }
+  // YouTube: once the pointer has rested on a video for a moment, ask the app
+  // to look it up, so the download can start the moment a quality is picked.
+  // Once per video; a quick pass of the mouse doesn't count.
+  // leftAt: when the pointer last moved off the video (a resting pointer
+  // sends no events, so "left" is what can be seen, not "still there").
+  let prepTimer = 0, leftAt = 0;
+  const prepared = new Set();
+  function prepareSoon() {
+    // Called on every mouse move: start the countdown once, don't restart it.
+    if (prepTimer || !/(^|\.)youtube\.com$/i.test(location.hostname)) return;
+    const started = performance.now();
+    prepTimer = setTimeout(async () => {
+      prepTimer = 0;
+      // The pointer moved off during the countdown: it was only passing.
+      if (leftAt > started && !open) return;
+      const info = await askPage();
+      if (!info?.id || info.live || prepared.has(info.id) || !video) return;
+      prepared.add(info.id);
+      chrome.runtime.sendMessage({ type: "prepare", url: `https://www.youtube.com/watch?v=${info.id}` }).catch(() => {});
+    }, 1000);
+  }
+
   function show(v) {
     if (!host) build();
     mount();
     if (video !== v) { video = v; setOpen(false); }
+    prepareSoon();
     clearTimeout(hideTimer);
     wrap.classList.add("on");
     if (!raf) raf = requestAnimationFrame(position);
   }
-  function hide() { wrap?.classList.remove("on"); setOpen(false); video = null; }
+  function hide() { clearTimeout(prepTimer); prepTimer = 0; wrap?.classList.remove("on"); setOpen(false); video = null; }
   function scheduleHide() { clearTimeout(hideTimer); if (!open) hideTimer = setTimeout(hide, 1600); }
   function setOpen(v) { open = v; wrap?.classList.toggle("open", v); }
 
   async function toggle() {
     if (open) { setOpen(false); return; }
+    panel.classList.remove("q");
     setOpen(true);
+    if (/(^|\.)youtube\.com$/i.test(location.hostname) && (await youtubeMenu())) return;
     if (onVideoSite()) {
       const u = pageUrlFor(video);
       // A site's front page isn't a video (yt-dlp would only say "Unsupported
@@ -186,11 +217,20 @@
     panel.innerHTML = `<div class="msg">Looking for downloadable files…</div>`;
     let res;
     try { res = await chrome.runtime.sendMessage({ type: "media" }); } catch { res = { items: [] }; }
+    // Any site: if the player loaded a stream (HLS or DASH), list its
+    // qualities now. The oldest one is the main playlist with every quality.
+    const hls = (res?.items || []).filter((m) => m.kind === "hls" || m.kind === "dash").at(-1);
+    if (hls?.qualities?.length) { qualityMenu(hls.url, title(), hls.qualities); return; }
+    if (hls && (await streamMenu(hls.url))) return;
+    if (onVideoSite()) return grab(location.href, title());
+    panel.innerHTML = `<div class="msg">Looking for downloadable files…</div>`;
     const items = [...(res?.items || [])];
     const src = video?.currentSrc;
     if (src && /^https?:/i.test(src) && !items.some((m) => m.url === src)) items.unshift({ url: src, kind: "file", mime: "video/mp4", size: 0 });
     const files = items.filter((m) => m.kind === "file");
-    const streams = items.filter((m) => m.kind !== "file");
+    // A player loads its main playlist first, then one per quality: the
+    // oldest stream is the main one, which lets SwiftDL offer every quality.
+    const stream = items.filter((m) => m.kind !== "file").at(-1);
     const name = title();
     let html = "";
     if (files.length) {
@@ -201,22 +241,92 @@
         return `<button class="item" data-url="${encodeURI(m.url).replace(/"/g, "%22")}" data-name="${name.replace(/"/g, "'")}.${ext}"><span class="tag">${ext.toUpperCase()}</span><span class="meta"><b>${kind}${m.size ? ` · ${bytes(m.size)}` : ""}</b><span>${new URL(m.url).hostname}</span></span></button>`;
       }).join("");
     }
-    if (streams.length) {
-      html += `<div class="head">Streams</div>` + streams.slice(0, 3).map((m) =>
-        `<button class="item" disabled><span class="tag stream">${m.kind.toUpperCase()}</span><span class="meta"><b>Streaming video</b><span>Not supported yet</span></span></button>`).join("");
+    if (stream) {
+      html += `<div class="head">Stream</div><button class="item" data-url="${encodeURI(stream.url).replace(/"/g, "%22")}" data-name="${name.replace(/"/g, "'")}.mp4"><span class="tag stream">${stream.kind.toUpperCase()}</span><span class="meta"><b>This video</b><span>Choose the quality in SwiftDL</span></span></button>`;
     }
-    if (!files.length && !streams.length) html = `<div class="msg">${onVideoSite() ? "This video has no link of its own (it may be an ad). Open the video's page, for example by clicking its time or title, and try again." : "No downloadable file found yet. Play the video for a moment, then try again."}</div>`;
-    else if (!files.length) html += `<div class="msg">This video streams in pieces (HLS/DASH), which SwiftDL can't download yet.</div>`;
+    if (!files.length && !stream) html = `<div class="msg">${onVideoSite() ? "This video has no link of its own (it may be an ad). Open the video's page, for example by clicking its time or title, and try again." : "No downloadable file found yet. Play the video for a moment, then try again."}</div>`;
     panel.innerHTML = html;
   }
 
-  async function grab(url, filename) {
+  // Say what actually went wrong. The commonest case isn't SwiftDL at all:
+  // the extension was updated or reloaded, which cuts off pages that were
+  // already open until they're reloaded.
+  function failure(error) {
+    const text = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+    if (/context invalidated|receiving end does not exist/i.test(error) || !chrome.runtime?.id) return "SwiftDL's extension was updated. Reload this page and try again.";
+    if (/host not found|not allowed/i.test(error)) return "SwiftDL isn't set up in this browser yet. Open the SwiftDL app once, then try again.";
+    return `SwiftDL couldn't take this download: ${text(error) || "no answer from the app"}.`;
+  }
+
+  // ---------- YouTube: qualities straight from the page ----------
+  // yt.js (inside the page) reads what the player already has. Same choices
+  // and format selectors as the app's own lookup, so either way matches.
+  const askPage = () => new Promise((resolve) => {
+    const on = (e) => { if (e.source === window && e.data?.swiftdl === "yt-info") { removeEventListener("message", on); resolve(e.data); } };
+    addEventListener("message", on);
+    postMessage({ swiftdl: "yt-ask" }, "*");
+    setTimeout(() => { removeEventListener("message", on); resolve(null); }, 800);
+  });
+  function ytQualities(formats) {
+    const videos = formats.filter((f) => f.mime.startsWith("video/") && f.height > 0);
+    const audios = formats.filter((f) => f.mime.startsWith("audio/"));
+    const m4a = audios.filter((f) => f.mime.startsWith("audio/mp4"));
+    const audioSize = Math.max(0, ...(m4a.length ? m4a : audios).map((f) => f.size));
+    const heights = [...new Set(videos.map((f) => f.height))].sort((a, b) => b - a);
+    const list = heights.map((h) => {
+      const at = videos.filter((f) => f.height === h);
+      const best = at.reduce((a, b) => (b.bitrate > a.bitrate ? b : a));
+      const fps = Math.max(...at.map((f) => f.fps));
+      return {
+        label: fps > 30.5 ? `${h}p${Math.round(fps)}` : `${h}p`,
+        format: `bv*[height=${h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height=${h}]+ba[ext=m4a]/bv*[height=${h}]+ba/b[height=${h}]/bv*[height<=${h}]+ba/b`,
+        ext: "mp4",
+        size: best.size ? best.size + audioSize : null,
+      };
+    });
+    if (audios.length) list.push({ label: "Audio only", format: "ba[ext=m4a]/ba", ext: m4a.length ? "m4a" : "webm", size: audioSize || null });
+    return list;
+  }
+  async function youtubeMenu() {
+    const info = await askPage();
+    if (!info?.id || info.live || !info.formats.length) return false;
+    const qualities = ytQualities(info.formats);
+    if (!qualities.length) return false;
+    const name = (info.title || title()).replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+    // Just the video: a "list=" mix would make yt-dlp think about the playlist.
+    const url = `https://www.youtube.com/watch?v=${info.id}`;
+    qualityMenu(url, name, qualities);
+    // Start the slow part now, unless hovering already did.
+    if (!prepared.has(info.id)) { prepared.add(info.id); chrome.runtime.sendMessage({ type: "prepare", url }).catch(() => {}); }
+    return true;
+  }
+
+  function qualityMenu(url, name, qualities) {
+    const row = (q, i) => `<button class="qrow" data-q="${i}"><span>${q.label}</span><span class="sz">${q.size ? bytes(q.size) : ""}</span></button>`;
+    const audio = qualities.findIndex((q) => q.label === "Audio only");
+    panel.classList.add("q");
+    panel.innerHTML = qualities.map((q, i) => (i === audio ? `<div class="qsep"></div>` : "") + row(q, i)).join("");
+    panel.querySelectorAll("[data-q]").forEach((b) => b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const pick = Number(b.dataset.q);
+      grab(url, `${name}.${qualities[pick].ext}`, { qualities, pick });
+    }));
+  }
+  async function streamMenu(url) {
+    panel.innerHTML = `<div class="msg">Reading qualities…</div>`;
+    let res;
+    try { res = await chrome.runtime.sendMessage({ type: "streamQualities", url }); } catch { res = null; }
+    if (!res?.qualities?.length) return false;
+    qualityMenu(url, title(), res.qualities);
+    return true;
+  }
+
+  async function grab(url, filename, extra = {}) {
+    panel.classList.remove("q");
     panel.innerHTML = `<div class="msg">Sending to SwiftDL…</div>`;
     let res;
-    try { res = await chrome.runtime.sendMessage({ type: "grab", url: decodeURI(url), filename }); } catch (e) { res = { ok: false, error: String(e) }; }
-    panel.innerHTML = res?.ok
-      ? `<div class="msg ok">Sent to SwiftDL ✓</div>`
-      : `<div class="msg err">Couldn't reach SwiftDL. Make sure the app is installed and has been opened once.</div>`;
+    try { res = await chrome.runtime.sendMessage({ type: "grab", url: decodeURI(url), filename, ...extra }); } catch (e) { res = { ok: false, error: String(e?.message || e) }; }
+    panel.innerHTML = res?.ok ? `<div class="msg ok">Sent to SwiftDL ✓</div>` : `<div class="msg err">${failure(res?.error || "")}</div>`;
     setTimeout(() => { setOpen(false); scheduleHide(); }, 1800);
   }
 
@@ -254,7 +364,7 @@
         try { disabled = (await chrome.runtime.sendMessage({ type: "media" }))?.disabled ?? false; } catch { disabled = false; }
       }
       if (!disabled) show(v);
-    } else if (video) scheduleHide();
+    } else if (video) { leftAt = now; scheduleHide(); }
   }, { passive: true });
   document.addEventListener("click", (e) => { if (open && host && !e.composedPath().includes(host)) setOpen(false); }, true);
   chrome.storage.onChanged.addListener((c) => { if (c.disabledSites) disabled = null; });

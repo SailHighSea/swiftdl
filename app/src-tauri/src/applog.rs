@@ -62,3 +62,11 @@ pub fn install_panic_hook() {
     }));
     write("INFO", &format!("SwiftDL {} started", env!("CARGO_PKG_VERSION")));
 }
+
+/// An ordinary diagnostic line that is always kept (lookups, tool downloads),
+/// so a bug report has something to go on without the debug log being on.
+pub fn line(msg: &str) {
+    write("INFO", msg);
+    #[cfg(debug_assertions)]
+    eprintln!("{msg}");
+}

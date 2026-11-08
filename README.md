@@ -188,17 +188,9 @@ What it does:
 - Catches downloads that a page starts with a form button (OneDrive and SharePoint "Download" on several files, for example) by repeating the same request. These run on one connection and can't resume.
 - Can be turned off for a single site, or for form downloads only, from its popup.
 
-Open SwiftDL once after installing it: it registers itself with every browser it finds, so the extension can reach it. Then add the extension for your browser. In SwiftDL, **Settings → Browser** shows the steps and opens the extension folder.
+**Firefox:** install it from [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/swiftdl-integration/), or click **Add to Firefox** in SwiftDL's **Settings → Browser**.
 
-### Firefox
-
-1. Download `swiftdl-firefox.xpi` from the [Releases page](https://github.com/harshsinghsv/swiftdl/releases).
-2. Open the file in Firefox (or drag it onto a Firefox window) and click **Add**. Firefox 140 or later.
-3. Approve the access it asks for. SwiftDL needs it to pass downloads and cookies to the app on your computer.
-
-The `.xpi` on each release is signed by Mozilla, so it installs in regular Firefox. To try an unsigned build, open `about:debugging`, choose **This Firefox**, then **Load Temporary Add-on**, and pick `manifest.json` from the `extension-firefox` folder.
-
-### Chrome, Edge, Brave and Vivaldi
+**Chrome, Edge, Brave and Vivaldi:** the extension comes with SwiftDL, so there's nothing extra to download. In SwiftDL, click **Add the extension** (or go to **Settings → Browser**) and follow the four steps:
 
 1. Open `chrome://extensions` (or `edge://extensions`).
 2. Turn on **Developer mode**.
@@ -268,7 +260,7 @@ cd app/src-tauri && cargo tauri dev
 | [`extension`](extension) | The browser extension (Manifest V3), for Firefox and Chromium browsers; the build writes Firefox's manifest to `app/src-tauri/gen/extension-firefox` |
 | [`tools`](tools) | A throttled test server, a native-messaging test client, and `test-build.ps1`, which builds installers and a portable copy into `test/` |
 
-Working on the interface only? Serve `app/ui` with any static server (`python -m http.server -d app/ui`) and open it in a browser. A simulated backend fills it with downloads, so no Rust build is needed.
+Working on the interface only? It is TypeScript, built with Vite: run `npm install` and `npm run dev` in `app/`, then open http://localhost:5179. A simulated backend fills it with downloads, so no Rust build is needed. Run `npm run build` once before building the app with Cargo.
 
 ## Contributing
 

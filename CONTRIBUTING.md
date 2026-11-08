@@ -13,12 +13,16 @@ cargo test --workspace          # engine tests
 cargo tauri dev                 # run the app (from app/src-tauri)
 ```
 
-**UI only:** serve `app/ui` with any static server and open it in a browser.
-`mock.js` simulates downloads, so you don't need to build Rust:
+**UI only:** the interface is TypeScript, built with Vite. Start the dev
+server and open http://localhost:5179 in a browser. `mock.ts` simulates
+downloads, so you don't need to build Rust:
 
 ```bash
-python -m http.server 5179 -d app/ui
+cd app && npm install && npm run dev
 ```
+
+`npm run check` type-checks it. `npm run build` writes `app/dist`, which the
+app embeds, so run it once before `cargo build`.
 
 **Extension:** load `extension/` with *Load unpacked* on `chrome://extensions`.
 `python tools/throttle_server.py` serves test files, a page with a download link
@@ -31,7 +35,7 @@ python -m http.server 5179 -d app/ui
 | `crates/engine` | Download engine (no UI): probing, segmentation, resume, speed limit |
 | `crates/cli` | Command-line front end |
 | `app/src-tauri` | Desktop app backend: download manager, windows, tray, browser registration |
-| `app/ui` | Interface, plain HTML/CSS/JS with no build step |
+| `app/ui` | Interface: TypeScript and CSS in `src/`, built by Vite into `app/dist` |
 | `extension` | Chromium extension (Manifest V3) |
 | `tools` | Test server and native-messaging client |
 
