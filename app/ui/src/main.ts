@@ -969,8 +969,8 @@ $("set-limit-custom").addEventListener("input", (e) => { setLimitKib = Math.max(
 function showTab(tab: string) {
   $("set-nav").querySelectorAll<HTMLElement>("[data-tab]").forEach((b) => b.classList.toggle("on", b.dataset.tab === tab));
   document.querySelectorAll<HTMLElement>("[data-panel]").forEach((p) => (p.hidden = p.dataset.panel !== tab));
-  // Nothing to save on these tabs (Browser has a setting only once the store listing exists).
-  ($("dlg-settings").querySelector(".set-foot") as HTMLElement).hidden = tab === "about" || (tab === "browser" && !state.integration?.storeAvailable);
+  // Browser has nothing to save until the store listing exists. About has the update and log toggles, so it keeps Save/Cancel.
+  ($("dlg-settings").querySelector(".set-foot") as HTMLElement).hidden = tab === "browser" && !state.integration?.storeAvailable;
 }
 $("set-nav").addEventListener("click", (e) => { const b = target(e).closest<HTMLElement>("[data-tab]"); if (b) showTab(b.dataset.tab!); });
 document.querySelectorAll<HTMLElement>(".stepper").forEach((st) => st.addEventListener("click", (e) => {

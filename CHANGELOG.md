@@ -7,6 +7,8 @@ uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- The Cancel and Save buttons are shown on the About tab again, so the update
+  and debug-log switches there can be saved.
 - Pasting or typing a video-site link (YouTube etc.) in New download no longer
   freezes the dialog; the quality window now opens.
 - The "Download video" button on a YouTube watch page always downloads that
