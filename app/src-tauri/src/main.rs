@@ -130,12 +130,12 @@ fn main() {
                 // The network only gets in with a long secret.
                 let lan = api.api_lan && api.api_secret.len() >= 12;
                 if api.api_lan && !lan {
-                    crate::log::line("local API: network access needs a secret of 12 or more characters; staying on this PC");
+                    crate::applog::line("local API: network access needs a secret of 12 or more characters; staying on this PC");
                 }
                 let addr = format!("{}:{}", if lan { "0.0.0.0" } else { "127.0.0.1" }, api.api_port);
                 match rpc::serve(&addr, Arc::new(mgr.clone()), api.api_secret, lan) {
-                    Ok(_) => crate::log::line(&format!("local API listening on {addr}")),
-                    Err(e) => crate::log::line(&format!("local API couldn't start on {addr}: {e}")),
+                    Ok(_) => crate::applog::line(&format!("local API listening on {addr}")),
+                    Err(e) => crate::applog::line(&format!("local API couldn't start on {addr}: {e}")),
                 }
             }
             // Launched by the browser extension: show only the small

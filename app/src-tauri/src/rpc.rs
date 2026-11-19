@@ -44,6 +44,8 @@ impl Backend for Arc<DownloadManager> {
                 start: true,
                 window: None,
                 format: None,
+                subtitles: None,
+                torrent_prio: vec![],
                 size: None,
                 torrent_files: None,
                 checksum: None,
