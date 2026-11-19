@@ -75,6 +75,15 @@ pub struct Item {
     /// Live status text, such as "Merging video and audio".
     #[serde(default, skip_deserializing)]
     pub note: Option<String>,
+    /// SHA-256 the user gave to check the finished file against.
+    #[serde(default)]
+    pub checksum: Option<String>,
+    /// Other addresses of the same file (from a Metalink).
+    #[serde(default)]
+    pub mirrors: Vec<String>,
+    /// The finished file matched `checksum`.
+    #[serde(default)]
+    pub verified: bool,
 }
 
 /// A download sent by the browser extension, waiting for the user to
@@ -174,6 +183,12 @@ pub struct AddRequest {
     /// Expected size, when known up front (video qualities).
     #[serde(default)]
     pub size: Option<u64>,
+    /// SHA-256 to check the finished file against.
+    #[serde(default)]
+    pub checksum: Option<String>,
+    /// Other addresses of the same file.
+    #[serde(default)]
+    pub mirrors: Vec<String>,
     /// A torrent: the files to download (see `Item::torrent_files`).
     #[serde(default)]
     pub torrent_files: Option<Vec<usize>>,
@@ -209,6 +224,8 @@ pub struct DownloadManager {
     app: AppHandle,
     client: Client,
     limiter: Arc<SpeedLimiter>,
+    /// The tray's "Ignore speed limit" is on.
+    limit_off: std::sync::atomic::AtomicBool,
     data_dir: PathBuf,
     inner: Mutex<Inner>,
 }
@@ -233,7 +250,12 @@ impl DownloadManager {
         let next_id = items.iter().map(|i| i.id).max().unwrap_or(0) + 1;
         Ok(Arc::new(Self {
             app,
-            client: swiftdl_engine::build_client()?,
+            client: {
+                crate::media::set_proxy(&settings.proxy);
+                crate::media::set_bind(&settings.bind_address);
+                swiftdl_engine::build_client_opts(&settings.proxy, &settings.bind_address)?
+            },
+            limit_off: std::sync::atomic::AtomicBool::new(false),
             limiter: Arc::new(SpeedLimiter::new(settings.speed_limit_kib * 1024)),
             data_dir,
             inner: Mutex::new(Inner {
@@ -306,6 +328,9 @@ impl DownloadManager {
                 torrent_files: req.torrent_files,
                 torrent_prio: req.torrent_prio,
                 note: None,
+                checksum: req.checksum,
+                mirrors: req.mirrors,
+                verified: false,
             });
             if let Some(label) = req.window {
                 g.windows.insert(id, label);
@@ -370,7 +395,9 @@ impl DownloadManager {
     }
 
     pub fn set_settings(self: &Arc<Self>, settings: Settings) {
-        self.limiter.set_rate(settings.speed_limit_kib * 1024);
+        crate::media::set_proxy(&settings.proxy);
+        crate::media::set_bind(&settings.bind_address);
+        self.apply_limit(settings.speed_limit_kib);
         if let Err(e) = crate::browser::offer_extension(settings.offer_extension) {
             crate::applog::error(format!("could not update browser extension offer: {e:#}"));
         }
@@ -385,6 +412,73 @@ impl DownloadManager {
         self.inner.lock().unwrap().settings = settings;
         self.save();
         self.schedule();
+    }
+
+    fn apply_limit(&self, kib: u64) {
+        let off = self.limit_off.load(Ordering::Relaxed);
+        self.limiter.set_rate(if off { 0 } else { kib * 1024 });
+    }
+
+    /// The tray's "Ignore speed limit": flips it, and returns whether it is on.
+    pub fn toggle_limit(&self) -> bool {
+        let off = !self.limit_off.fetch_xor(true, Ordering::Relaxed);
+        let kib = self.inner.lock().unwrap().settings.speed_limit_kib;
+        self.apply_limit(kib);
+        off
+    }
+
+    /// A Metalink link: fetches the list, then downloads the file from all its
+    /// mirrors, checking the checksum it lists. Returns the file's name and
+    /// how many addresses it has.
+    pub async fn add_metalink(self: &Arc<Self>, url: &str) -> Result<(String, usize), String> {
+        let text = self.client.get(url).send().await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?.text().await.map_err(|e| e.to_string())?;
+        let m = crate::metalink::parse(&text).map_err(|e| format!("{e:#}"))?;
+        let dir = self.default_dir(category_for(&m.name));
+        let n = m.urls.len();
+        self.add(AddRequest {
+            url: m.urls[0].clone(),
+            filename: m.name.clone(),
+            dir,
+            headers: vec![],
+            start: true,
+            window: None,
+            format: None,
+            subtitles: None,
+            torrent_prio: vec![],
+            size: m.size,
+            torrent_files: None,
+            checksum: m.sha256,
+            mirrors: m.urls[1..].to_vec(),
+        });
+        Ok((m.name, n))
+    }
+
+    /// Moves a waiting download to the front of the queue.
+    pub fn download_next(&self, id: u64) -> bool {
+        let moved = {
+            let mut g = self.inner.lock().unwrap();
+            let pos = g.items.iter().position(|i| i.id == id && i.status == Status::Queued);
+            let first = g.items.iter().position(|i| i.status == Status::Queued);
+            match (pos, first) {
+                (Some(pos), Some(first)) => {
+                    let item = g.items.remove(pos);
+                    g.items.insert(first, item);
+                    true
+                }
+                _ => false,
+            }
+        };
+        if moved {
+            self.changed();
+            self.save();
+        }
+        moved
+    }
+
+    /// The chosen debrid service and its token.
+    pub fn debrid(&self) -> (String, String) {
+        let g = self.inner.lock().unwrap();
+        (g.settings.debrid_provider.clone(), g.settings.debrid_token.clone())
     }
 
     pub fn item(&self, id: u64) -> Option<Item> {
@@ -406,7 +500,26 @@ impl DownloadManager {
             self.new_download_window(inc);
             return;
         }
-        // No dialog: probe for the real file name, then start right away.
+        self.add_quiet(inc);
+    }
+
+    /// Links pasted in bulk (a list, or a pattern like `file[01-50].zip`):
+    /// each is probed for its name and started, without a window per file.
+    pub fn add_links(self: &Arc<Self>, text: &str) -> usize {
+        let links = crate::batch::expand_links(text);
+        for url in &links {
+            let inc = Incoming { url: url.clone(), filename: None, referrer: None, cookies: None, user_agent: None, qualities: None, pick: None, method: None, body: None, content_type: None };
+            if crate::media::is_media_url(url) || crate::torrent::is_torrent(url, None) {
+                self.new_download_window(inc);
+            } else {
+                self.add_quiet(inc);
+            }
+        }
+        links.len()
+    }
+
+    /// Probes for the real file name, then starts the download right away.
+    fn add_quiet(self: &Arc<Self>, inc: Incoming) {
         let this = self.clone();
         tauri::async_runtime::spawn(async move {
             let headers = inc.headers();
@@ -418,12 +531,87 @@ impl DownloadManager {
             };
             let filename = inc.suggested_name().or(probed).unwrap_or_else(|| "download.bin".into());
             let dir = this.default_dir(category_for(&filename));
-            this.add(AddRequest { url: inc.url, filename, dir, headers, start: true, window: None, format: None, subtitles: None, size: None, torrent_files: None, torrent_prio: vec![] });
+            this.add(AddRequest { url: inc.url, filename, dir, headers, start: true, window: None, format: None, subtitles: None, size: None, torrent_files: None, torrent_prio: vec![], checksum: None, mirrors: vec![] });
         });
     }
 
     /// Opens a "New download" window for `inc`.
-    pub fn new_download_window(&self, inc: Incoming) {
+    /// The videos picked from a playlist, each as its own download in the chosen
+    /// shape ("high", "best" or "audio"). Returns how many were added.
+    pub fn add_playlist(self: &Arc<Self>, entries: &[(String, String)], mode: &str) -> usize {
+        let (format, ext, category) = crate::media::playlist_format(mode);
+        for (url, title) in entries {
+            self.add(AddRequest {
+                url: url.clone(),
+                filename: format!("{}.{ext}", clean_name(title)),
+                dir: self.default_dir(category),
+                headers: vec![],
+                start: true,
+                window: None,
+                format: Some(format.to_string()),
+                subtitles: None,
+                torrent_prio: vec![],
+                size: None,
+                torrent_files: None,
+                checksum: None,
+                mirrors: vec![],
+            });
+        }
+        entries.len()
+    }
+
+    /// A video link: opens the New download window to choose a quality, unless
+    /// Settings says to start straight away with a default.
+    pub fn new_download_window(self: &Arc<Self>, inc: Incoming) {
+        let mode = self.settings().video_default;
+        if mode != "ask" && crate::media::is_media_url(&inc.url) && !crate::torrent::is_torrent(&inc.url, inc.filename.as_deref()) {
+            self.add_video_quietly(inc, mode);
+            return;
+        }
+        self.open_confirm_window(inc);
+    }
+
+    /// Looks up the video's qualities (the extension may have sent them), picks
+    /// one by the default, and starts. If anything goes wrong, the window opens
+    /// so the person can see why and choose.
+    fn add_video_quietly(self: &Arc<Self>, inc: Incoming, mode: String) {
+        let this = self.clone();
+        tauri::async_runtime::spawn(async move {
+            let found: Result<(String, Vec<crate::media::Quality>), String> = match inc.qualities.clone().filter(|q| !q.is_empty()) {
+                Some(q) => Ok((inc.filename.clone().unwrap_or_default(), q)),
+                None => crate::media::probe(&this.client, &inc.url, inc.headers()).await.map(|i| (i.title, i.qualities)).map_err(|e| format!("{e:#}")),
+            };
+            let picked = found.ok().and_then(|(title, qs)| {
+                // A quality chosen on the page beats the default.
+                let at = inc.pick.filter(|&n| n < qs.len()).or_else(|| pick_quality(&qs, &mode))?;
+                Some((title, qs[at].clone()))
+            });
+            let Some((title, q)) = picked else {
+                this.open_confirm_window(inc);
+                return;
+            };
+            let name = format!("{}.{}", clean_name(if title.trim().is_empty() { "video" } else { &title }), q.ext);
+            let category = if matches!(q.ext.as_str(), "m4a" | "mp3" | "opus" | "ogg" | "webm" | "aac" | "flac") && q.label == "Audio only" { "Music" } else { "Video" };
+            let dir = this.default_dir(category);
+            this.add(AddRequest {
+                url: inc.url.clone(),
+                filename: name,
+                dir,
+                headers: inc.headers(),
+                start: true,
+                window: None,
+                format: Some(q.format),
+                subtitles: None,
+                torrent_prio: vec![],
+                size: q.size,
+                torrent_files: None,
+                checksum: None,
+                mirrors: vec![],
+            });
+        });
+    }
+
+    fn open_confirm_window(&self, inc: Incoming) {
         let token = {
             let mut g = self.inner.lock().unwrap();
             let token = g.next_confirm;
@@ -484,7 +672,9 @@ impl DownloadManager {
         let to_start: Vec<(u64, Request, Kind, Arc<Progress>, crate::media::Note, CancellationToken)> = {
             let mut g = self.inner.lock().unwrap();
             let Inner { items, running, settings, .. } = &mut *g;
-            let free = settings.max_concurrent.max(1).saturating_sub(running.len());
+            // A start time in the future holds the whole queue.
+            let held = settings.start_at > now_ms();
+            let free = if held { 0 } else { settings.max_concurrent.max(1).saturating_sub(running.len()) };
             let connections = settings.connections;
             items
                 .iter_mut()
@@ -500,6 +690,7 @@ impl DownloadManager {
                         headers: to_header_map(&item.headers),
                         restart: false,
                         post_body: post_body(&item.headers),
+                        mirrors: item.mirrors.clone(),
                     };
                     let progress = Arc::new(Progress::default());
                     progress.downloaded.store(item.downloaded, Ordering::Relaxed);
@@ -518,6 +709,7 @@ impl DownloadManager {
                         },
                     );
                     let kind = match (&item.torrent_files, &item.format) {
+                        _ if crate::ftp::is_ftp(&item.url) => Kind::Ftp,
                         (Some(files), _) => Kind::Torrent(files.clone(), item.torrent_prio.clone()),
                         (None, Some(format)) => Kind::Media(format.clone(), item.subtitles.clone()),
                         (None, None) => Kind::File,
@@ -533,6 +725,7 @@ impl DownloadManager {
         for (id, req, kind, progress, note, cancel) in to_start {
             let this = self.clone();
             tauri::async_runtime::spawn(async move {
+                let check_note = note.clone();
                 let result = match kind {
                     // A stream picked in the extension: our own downloader.
                     Kind::Media(format, _) if crate::stream::parse_format(&format).is_some() => {
@@ -558,8 +751,23 @@ impl DownloadManager {
                         let job = crate::torrent::Job { url: req.url.clone(), headers: req.headers.clone(), dir, files, prio, seed };
                         crate::torrent::run(&this.client, job, progress, note, cancel).await
                     }
-                    Kind::File => swiftdl_engine::run(&this.client, &req, progress, cancel, this.limiter.clone()).await,
+                    Kind::Ftp => crate::ftp::run(req.url.clone(), req.dest.clone(), progress, cancel).await,
+                    Kind::File => {
+                        // A file-hosting link goes through Real-Debrid, when set up.
+                        let mut req = req;
+                        let (service, token) = this.debrid();
+                        match crate::debrid::resolve(&this.client, &service, &token, &req.url).await {
+                            Ok(Some(direct)) => {
+                                req.url = direct.url;
+                                req.headers = Default::default();
+                                swiftdl_engine::run(&this.client, &req, progress, cancel, this.limiter.clone()).await
+                            }
+                            Ok(None) => swiftdl_engine::run(&this.client, &req, progress, cancel, this.limiter.clone()).await,
+                            Err(e) => Err(e),
+                        }
+                    }
                 };
+                let result = this.verify(id, result, &check_note).await;
                 this.finish(id, result);
             });
         }
@@ -568,10 +776,13 @@ impl DownloadManager {
 
     fn finish(self: &Arc<Self>, id: u64, result: Result<Outcome>) {
         let mut notify = None;
+        let mut completed = false;
+        let mut unpack: Option<PathBuf> = None;
         {
             let mut g = self.inner.lock().unwrap();
             let running = g.running.remove(&id);
             let notify_enabled = g.settings.notify_on_complete;
+            let extract_enabled = g.settings.extract_archives;
             match g.items.iter_mut().find(|i| i.id == id) {
                 None => {
                     // Removed while running: drop what it left behind.
@@ -595,6 +806,10 @@ impl DownloadManager {
                     item.note = None;
                     match result {
                         Ok(Outcome::Completed) => {
+                            completed = true;
+                            if extract_enabled && item.torrent_files.is_none() && crate::extract::is_archive(&item.filename) {
+                                unpack = Some(item.path.clone());
+                            }
                             item.status = Status::Completed;
                             item.completed_at = Some(now_ms());
                             item.size = item.size.or(Some(item.downloaded));
@@ -620,9 +835,155 @@ impl DownloadManager {
             use tauri_plugin_notification::NotificationExt;
             let _ = self.app.notification().builder().title("Download complete").body(name).show();
         }
+        if let Some(path) = unpack {
+            let app = self.app.clone();
+            std::thread::spawn(move || {
+                use tauri_plugin_notification::NotificationExt;
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                match crate::extract::unpack(&path) {
+                    Ok(dir) => {
+                        crate::applog::line(&format!("unpacked {name} into {}", dir.display()));
+                        let _ = app.notification().builder().title("Unpacked").body(format!("{name} is in {}", dir.display())).show();
+                    }
+                    Err(e) => {
+                        crate::applog::line(&format!("couldn't unpack {name}: {e:#}"));
+                        let _ = app.notification().builder().title("Couldn't unpack").body(format!("{name}: {e}")).show();
+                    }
+                }
+            });
+        }
         self.changed();
         self.save();
         self.schedule();
+        // "When all downloads finish": once nothing is running or waiting.
+        let action = {
+            let mut g = self.inner.lock().unwrap();
+            let idle = g.running.is_empty() && !g.items.iter().any(|i| i.status == Status::Queued);
+            if completed && idle && g.settings.when_done != "nothing" {
+                Some(std::mem::replace(&mut g.settings.when_done, "nothing".into()))
+            } else {
+                None
+            }
+        };
+        if let Some(kind) = action {
+            let settings = self.inner.lock().unwrap().settings.clone();
+            let _ = self.app.emit("settings", &settings);
+            self.save();
+            self.power(&kind);
+        }
+    }
+
+    /// Checks a finished file against the SHA-256 the user gave, if any.
+    async fn verify(self: &Arc<Self>, id: u64, result: Result<Outcome>, note: &crate::media::Note) -> Result<Outcome> {
+        if !matches!(result, Ok(Outcome::Completed)) {
+            return result;
+        }
+        let Some((want, path)) = self.item(id).and_then(|i| i.checksum.clone().map(|c| (c, i.path.clone()))) else { return result };
+        *note.lock().unwrap() = Some("Checking the file".into());
+        match tauri::async_runtime::spawn_blocking(move || sha256_file(&path)).await {
+            Ok(Ok(got)) if got.eq_ignore_ascii_case(want.trim()) => {
+                if let Some(i) = self.inner.lock().unwrap().items.iter_mut().find(|i| i.id == id) {
+                    i.verified = true;
+                }
+                result
+            }
+            Ok(Ok(got)) => Err(anyhow::anyhow!("The file's SHA-256 doesn't match. Expected {}, got {got}. It may be corrupted or not the file you meant.", want.trim())),
+            _ => Err(anyhow::anyhow!("The file finished, but couldn't be read to check it.")),
+        }
+    }
+
+    /// Replaces a stopped download's address (an expired link, refreshed) and
+    /// resumes it where it left off.
+    pub fn set_url(self: &Arc<Self>, id: u64, url: &str) -> Result<(), String> {
+        let url = url.trim();
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return Err("That isn't a web link".into());
+        }
+        {
+            let mut g = self.inner.lock().unwrap();
+            let Some(item) = g.items.iter_mut().find(|i| i.id == id) else { return Err("Download not found".into()) };
+            if item.format.is_some() || item.torrent_files.is_some() {
+                return Err("Only regular file downloads can change address".into());
+            }
+            if matches!(item.status, Status::Completed | Status::Downloading) {
+                return Err("Pause the download first".into());
+            }
+            item.url = url.to_string();
+            item.error = None;
+            swiftdl_engine::rebase_saved(&item.path, url);
+        }
+        self.resume(&[id]);
+        Ok(())
+    }
+
+    /// Quit, sleep or shut down, with a notice first.
+    fn power(&self, kind: &str) {
+        use tauri_plugin_notification::NotificationExt;
+        crate::applog::line(&format!("all downloads finished: {kind}"));
+        if kind == "close" {
+            self.app.exit(0);
+            return;
+        }
+        let body = if kind == "sleep" { "Going to sleep in a few seconds." } else { "Shutting down in 60 seconds. To cancel, run: shutdown /a" };
+        let _ = self.app.notification().builder().title("Downloads finished").body(body).show();
+        let kind = kind.to_string();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(5));
+            let mut cmd;
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd = if kind == "sleep" {
+                    let mut c = std::process::Command::new("rundll32.exe");
+                    c.args(["powrprof.dll,SetSuspendState", "0,1,0"]);
+                    c
+                } else {
+                    let mut c = std::process::Command::new("shutdown");
+                    c.args(["/s", "/t", "60"]);
+                    c
+                };
+                cmd.creation_flags(0x0800_0000);
+            }
+            #[cfg(target_os = "macos")]
+            {
+                cmd = if kind == "sleep" {
+                    let mut c = std::process::Command::new("pmset");
+                    c.arg("sleepnow");
+                    c
+                } else {
+                    let mut c = std::process::Command::new("osascript");
+                    c.args(["-e", "tell app \"System Events\" to shut down"]);
+                    c
+                };
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                cmd = std::process::Command::new("systemctl");
+                cmd.arg(if kind == "sleep" { "suspend" } else { "poweroff" });
+            }
+            if let Err(e) = cmd.spawn() {
+                crate::applog::line(&format!("could not {kind}: {e}"));
+            }
+        });
+    }
+
+    /// Starts the held queue once its start time has come.
+    fn check_start_time(self: &Arc<Self>) {
+        let due = {
+            let mut g = self.inner.lock().unwrap();
+            if g.settings.start_at != 0 && now_ms() >= g.settings.start_at {
+                g.settings.start_at = 0;
+                true
+            } else {
+                false
+            }
+        };
+        if due {
+            let settings = self.inner.lock().unwrap().settings.clone();
+            let _ = self.app.emit("settings", &settings);
+            self.save();
+            self.schedule();
+        }
     }
 
     /// Called every 500 ms: copies live progress into items, computes
@@ -685,6 +1046,7 @@ impl DownloadManager {
             let mut tick = tokio::time::interval(Duration::from_millis(500));
             for n in 0u64.. {
                 tick.tick().await;
+                this.check_start_time();
                 this.tick(n);
             }
         });
@@ -696,6 +1058,8 @@ impl DownloadManager {
 /// How a download is fetched.
 enum Kind {
     File,
+    /// An ftp:// address.
+    Ftp,
     /// A video site, through yt-dlp, with this format.
     Media(String, Option<String>),
     /// A torrent or magnet link, with these files (empty = all).
@@ -751,4 +1115,85 @@ fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     std::fs::write(&tmp, serde_json::to_vec_pretty(value)?)?;
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+fn sha256_file(path: &Path) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hash = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hash.update(&buf[..n]);
+    }
+    Ok(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+#[cfg(test)]
+mod checksum_tests {
+    #[test]
+    fn hashes_a_file() {
+        let p = std::env::temp_dir().join("swiftdl-sha-test.txt");
+        std::fs::write(&p, b"abc").unwrap();
+        assert_eq!(super::sha256_file(&p).unwrap(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// The quality a default means: "audio" is sound only, "best" the first (highest)
+/// video, "high" the best up to 1080p that isn't HDR.
+fn pick_quality(qs: &[crate::media::Quality], mode: &str) -> Option<usize> {
+    let height = |q: &crate::media::Quality| q.label.split(|c: char| !c.is_ascii_digit()).next().and_then(|d| d.parse::<u32>().ok());
+    let video = |q: &crate::media::Quality| q.label != "Audio only";
+    match mode {
+        "audio" => qs.iter().position(|q| q.label == "Audio only"),
+        "best" => qs.iter().position(video),
+        _ => qs.iter().position(|q| video(q) && !q.label.contains("HDR") && height(q).is_some_and(|h| h <= 1080)).or_else(|| qs.iter().position(video)),
+    }
+}
+
+/// A file name from a video's title: no characters Windows refuses, no extension left over.
+pub fn clean_name(title: &str) -> String {
+    let t = title.trim();
+    let t = match t.rsplit_once('.') {
+        Some((stem, ext)) if (2..=4).contains(&ext.len()) && ext.chars().all(|c| c.is_ascii_alphanumeric()) && !stem.is_empty() => stem,
+        _ => t,
+    };
+    let cleaned: String = t.chars().map(|c| if "\\/:*?\"<>|".contains(c) || c.is_control() { ' ' } else { c }).collect();
+    let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cut: String = cleaned.chars().take(120).collect();
+    let cut = cut.trim().trim_end_matches('.').to_string();
+    if cut.is_empty() { "video".into() } else { cut }
+}
+
+#[cfg(test)]
+mod video_default_tests {
+    use super::*;
+    use crate::media::Quality;
+
+    fn q(label: &str, ext: &str) -> Quality {
+        Quality { label: label.into(), format: format!("f-{label}"), ext: ext.into(), size: None }
+    }
+
+    #[test]
+    fn picks_by_default() {
+        let qs = [q("2160p HDR", "mp4"), q("2160p", "mp4"), q("1080p60", "mp4"), q("1080p HDR", "mp4"), q("720p", "mp4"), q("Audio only", "m4a")];
+        assert_eq!(pick_quality(&qs, "high"), Some(2), "best up to 1080p, never HDR by default");
+        assert_eq!(pick_quality(&qs, "best"), Some(0));
+        assert_eq!(pick_quality(&qs, "audio"), Some(5));
+        assert_eq!(pick_quality(&[q("4320p", "mp4")], "high"), Some(0), "nothing at or under 1080p: take the first video");
+        assert_eq!(pick_quality(&[q("720p", "mp4")], "audio"), None);
+    }
+
+    #[test]
+    fn names_from_titles() {
+        assert_eq!(clean_name("Noor, Khan - Aarzu (Official Music Video).mp4"), "Noor, Khan - Aarzu (Official Music Video)");
+        assert_eq!(clean_name("a/b: c*d?"), "a b c d");
+        assert_eq!(clean_name("Version 2.0"), "Version 2.0", "a long tail after the dot isn't an extension");
+        assert_eq!(clean_name("  "), "video");
+    }
 }

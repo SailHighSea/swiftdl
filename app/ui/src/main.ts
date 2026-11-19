@@ -5,7 +5,7 @@ import "./styles.css";
 import "./themes.css";
 import { invoke, listen, currentWindow, $ } from "./api";
 import type { Item, Settings, IntegrationStatus, BrowserStatus, Incoming, ProbeInfo, Header, Status, Commands, UpdateInfo } from "./api";
-import { icon, CATS, parts, bytes, speed, dur, when, esc, host, segBar } from "./util";
+import { icon, CATS, catOf, parts, bytes, speed, dur, when, esc, host, segBar } from "./util";
 
 const appWindow = currentWindow();
 const target = (e: Event) => e.target as HTMLElement;
@@ -41,6 +41,8 @@ function statusIcon(it: StatusLike) {
 
 const pct = (it: StatusLike) => (it.size ? Math.min(100, (it.downloaded / it.size) * 100) : it.status === "completed" ? 100 : 0);
 const eta = (it: Item) => (it.speed > 0 && it.size ? (it.size - it.downloaded) / it.speed : Infinity);
+// Place in the waiting line (1 = next).
+const queuePos = (it: Item) => state.items.filter((i) => i.status === "queued").findIndex((i) => i.id === it.id) + 1;
 const isActive = (it: Item) => it.status === "downloading" || it.status === "queued";
 const ext = (name: string) => (/\.([a-z0-9]{1,5})$/i.exec(name || "") || [])[1]?.toUpperCase() || "";
 const STATUS: Record<Status, string> = { downloading: "Downloading", queued: "Queued", paused: "Paused", completed: "Completed", error: "Failed" };
@@ -81,7 +83,11 @@ const GROUPS: [Status, string][] = [
 function grouped(list: Item[]) {
   return GROUPS.map(([s, title]) => {
     const items = list.filter((i) => i.status === s);
-    items.sort(s === "completed" ? (a, b) => (b.completedAt || 0) - (a.completedAt || 0) : (a, b) => b.addedAt - a.addedAt);
+    // Waiting downloads are listed in the order they will start.
+    const queue = new Map(state.items.map((i, n) => [i.id, n]));
+    items.sort(s === "completed" ? (a, b) => (b.completedAt || 0) - (a.completedAt || 0)
+      : s === "queued" ? (a, b) => (queue.get(a.id) || 0) - (queue.get(b.id) || 0)
+      : (a, b) => b.addedAt - a.addedAt);
     return { s, title, items };
   }).filter((g) => g.items.length);
 }
@@ -193,7 +199,7 @@ function meta(it: Item) {
   switch (it.status) {
     case "downloading":
       return `${mini("")}<span class="m-size">${bytes(it.downloaded)} / ${bytes(it.size)}</span><span class="m-speed">${it.speed > 0 ? speed(it.speed) : "Connecting…"}</span><span class="m-eta">${dur(eta(it))}</span>`;
-    case "queued": return `${mini("queued")}<span class="m-size">${it.size ? bytes(it.size) : "—"}</span><span class="m-speed" style="color:var(--muted);font-weight:500">Queued</span><span class="m-eta"></span>`;
+    case "queued": return `${mini("queued")}<span class="m-size">${it.size ? bytes(it.size) : "—"}</span><span class="m-speed" style="color:var(--muted);font-weight:500">Queued · #${queuePos(it)}</span><span class="m-eta"></span>`;
     case "paused": return `${mini("paused")}<span class="m-size">${bytes(it.downloaded)} / ${bytes(it.size)}</span><span class="m-speed" style="color:var(--amber);font-weight:500">Paused</span><span class="m-eta"></span>`;
     case "error": return `<span class="m-size">${bytes(it.size)}</span><span class="m-when">${when(it.addedAt)}</span>`;
     default: return `<span class="cat"><i style="background:${cat(it).color}"></i>${esc(it.category)}</span><span class="m-size">${bytes(it.size)}</span><span class="m-when">${when(it.completedAt)}</span>`;
@@ -267,7 +273,7 @@ function renderInspector() {
   segBar(bar, null, undefined, pct(it));
   const row = (k: string, v: string) => `<dt>${k}</dt><dd><span>${v}</span></dd>`;
   const stats = it.status === "completed"
-    ? row("Size", bytes(it.size)) + row("Finished", when(it.completedAt) || "—")
+    ? row("Size", bytes(it.size)) + row("Finished", when(it.completedAt) || "—") + (it.verified ? row("Checksum", "SHA-256 matches") : "")
     : row("Downloaded", it.size ? `${bytes(it.downloaded)} of ${bytes(it.size)}` : bytes(it.downloaded)) +
       (dl && !finishing ? row("Speed", speed(it.speed)) + row("Time left", dur(eta(it))) : "") +
       (dl && it.connections ? row("Connections", String(it.connections)) : "");
@@ -287,7 +293,7 @@ function renderInspector() {
   if ($("ins-props").innerHTML !== props) $("ins-props").innerHTML = props;
 
   const primary = it.status === "completed" ? `<button class="btn primary" data-ins="open">Open</button>`
-    : it.status === "error" ? `<button class="btn primary" data-ins="resume">Retry</button>`
+    : it.status === "error" ? `<button class="btn" data-ins="browser" title="Open the link in your browser, which downloads it with your own session">Download in browser</button><button class="btn primary" data-ins="resume">Retry</button>`
     : isActive(it) ? `<button class="btn" data-ins="pause">Pause</button>`
     : `<button class="btn primary" data-ins="resume">Resume</button>`;
   const foot = `<button class="btn" data-ins="folder">Show in folder</button>${primary}<button class="btn icon" data-ins="more" title="More">${icon("more")}</button>`;
@@ -476,6 +482,7 @@ function act(name: string, it: Item | null | undefined, anchor?: HTMLElement) {
     case "folder": return void call("open_folder", { id: it.id });
     case "pause": return pause([it.id]);
     case "resume": return resume([it.id]);
+    case "browser": return void call("open_in_browser", { url: it.url });
     case "copy": return void copy(it.url, "Link copied");
     case "copy-path": return void copy(it.path, "Path copied");
     case "delete": return askDelete(it);
@@ -542,6 +549,17 @@ function showMenu(x: number, y: number, entries: MenuLine[], above = false) {
   menu.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
   menu.style.top = `${Math.max(8, Math.min(y, innerHeight - r.height - 8))}px`;
 }
+async function downloadNext(it: Item) {
+  const ok = await invoke("download_next", { id: it.id }).catch(() => false);
+  toast(ok ? "Will download next" : "It's not waiting in the queue", ok ? "ok" : undefined);
+}
+// A link that expired: copy the fresh one, then this carries on where it stopped.
+async function replaceLink(it: Item) {
+  const url = await readClip();
+  if (!url) return toast("Copy the new link first, then choose this again");
+  try { await invoke("set_url", { id: it.id, url }); toast("Link replaced, resuming", "ok"); }
+  catch (e) { toast(esc(String(e)), "err"); }
+}
 function itemMenu(it: Item, x: number, y: number, above = false) {
   const many = selectedItems();
   if (many.length > 1 && state.sel.has(it.id)) {
@@ -561,6 +579,9 @@ function itemMenu(it: Item, x: number, y: number, above = false) {
     "-",
     isActive(it) ? { icon: "pause", label: "Pause", keys: ["Space"], run: () => pause([it.id]) }
       : { icon: it.status === "error" ? "retry" : "play", label: it.status === "error" ? "Retry" : "Resume", keys: ["Space"], enabled: it.status !== "completed", run: () => resume([it.id]) },
+    { icon: "play", label: "Download next", enabled: it.status === "queued", run: () => downloadNext(it) },
+    { icon: "open", label: "Download in browser", enabled: it.status === "error", run: () => act("browser", it) },
+    { icon: "link", label: "Replace link from clipboard", enabled: it.status === "error" || it.status === "paused", run: () => replaceLink(it) },
     { icon: "link", label: "Copy link", keys: ["C"], run: () => act("copy", it) },
     "-",
     { icon: "trash", label: it.status === "completed" ? "Remove…" : "Cancel download…", keys: ["Del"], danger: true, run: () => askDelete(it) },
@@ -768,6 +789,17 @@ function openComposer(incoming?: ComposerInput) {
   if (incoming?.url) probe();
   else readClip().then((u) => { if (u && !$("add-url").value) { $("add-url").value = u; $("add-url").select(); probe(); } });
 }
+// Opt-in: switching back to SwiftDL after copying a download link offers to download it.
+let lastClip = "";
+window.addEventListener("focus", async () => {
+  if (!state.settings?.watchClipboard || $("dlg-add").open || $("dlg-settings").open) return;
+  const u = await readClip();
+  if (!u || u === lastClip) return;
+  const file = /\.(zip|rar|7z|iso|exe|msi|dmg|pkg|deb|rpm|apk|mp4|mkv|mp3|flac|pdf|torrent)(\?|#|$)/i.test(u) || /^magnet:/i.test(u);
+  if (!file && !(await invoke("is_media_url", { url: u }).catch(() => false))) return;
+  lastClip = u;
+  openComposer();
+});
 const readClip = (): Promise<string | undefined> => (navigator.clipboard?.readText?.() || Promise.resolve("")).then(firstUrl).catch(() => undefined);
 function setState(kind: "idle" | "loading" | "error" | "done", msg = "") {
   const el = $("add-state");
@@ -788,7 +820,23 @@ function renderChips() {
 }
 async function probe() {
   const url = $("add-url").value.trim();
-  if (!/^(https?:\/\/|magnet:\?)\S+/i.test(url)) { add.info = null; $("add-file").hidden = true; renderChips(); if (url) setState("error", "Paste a web link (http:// or https://) or a magnet link"); else setState("idle"); return; }
+  if (!/^(https?:\/\/|ftp:\/\/|magnet:\?)\S+/i.test(url)) { add.info = null; $("add-file").hidden = true; renderChips(); if (url) setState("error", "Paste a web link (http://, https:// or ftp://) or a magnet link"); else setState("idle"); return; }
+  // A playlist page: choose which videos, and video or audio.
+  if (await invoke("is_playlist_url", { url }).catch(() => false)) {
+    $("dlg-add").close();
+    openPlaylist(url);
+    return;
+  }
+  // A Metalink lists several mirrors of one file: download from all of them.
+  if (/\.(meta4|metalink)(\?|#|$)/i.test(url)) {
+    try {
+      const [name, n] = await invoke("add_metalink", { url });
+      $("dlg-add").close();
+      if (state.view !== "all" && state.view !== "active") state.view = "all";
+      toast(`Downloading ${esc(name)} from ${n} address${n === 1 ? "" : "es"}`, "dl");
+    } catch (e) { setState("error", `Couldn't read that Metalink: ${e}`); }
+    return;
+  }
   const seq = ++add.seq;
   // Video sites need a quality and torrents a file choice: their own window.
   const special = await invoke("is_media_url", { url }).catch(() => false) || await invoke("is_torrent_url", { url, filename: null }).catch(() => false);
@@ -817,6 +865,105 @@ async function probe() {
     setState("error", `Couldn't reach that link: ${e}`);
   }
 }
+// ---------- playlists ----------
+type PlEntry = { url: string; title: string; duration: number | null };
+const pl = { items: [] as PlEntry[], picked: new Set<string>(), mode: "high" };
+const length = (s: number | null) => (s ? (s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}` : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`) : "");
+function renderPlaylist() {
+  $("pl-chips").querySelectorAll<HTMLElement>("[data-m]").forEach((c) => c.classList.toggle("on", c.dataset.m === pl.mode));
+  $("pl-list").innerHTML = pl.items.map((f) => `<label class="grab-row"><input type="checkbox" data-u="${esc(f.url)}"${pl.picked.has(f.url) ? " checked" : ""}><span class="gn" title="${esc(f.title)}">${esc(f.title)}</span><span class="gh">${length(f.duration)}</span></label>`).join("");
+  const n = pl.picked.size;
+  $("pl-go").disabled = !n;
+  $("pl-go").textContent = n ? `Download ${n} video${n === 1 ? "" : "s"}` : "Download";
+  $("pl-all").textContent = pl.items.length && pl.picked.size === pl.items.length ? "Select none" : "Select all";
+}
+async function openPlaylist(url: string) {
+  pl.items = []; pl.picked.clear(); pl.mode = "high";
+  $("pl-title").textContent = "";
+  $("pl-state").textContent = "Reading the playlist…";
+  renderPlaylist();
+  $("dlg-playlist").showModal();
+  try {
+    const info = await invoke("probe_playlist", { url });
+    pl.items = info.entries; pl.picked = new Set(info.entries.map((e) => e.url));
+    $("pl-title").textContent = info.title;
+    $("pl-state").textContent = `${info.entries.length} videos`;
+    renderPlaylist();
+  } catch (e) { $("pl-state").textContent = `Couldn't read that playlist: ${e}`; }
+}
+$("pl-x").onclick = () => $("dlg-playlist").close();
+$("pl-chips").addEventListener("click", (e) => { const b = target(e).closest<HTMLElement>("[data-m]"); if (b) { pl.mode = b.dataset.m!; renderPlaylist(); } });
+$("pl-list").addEventListener("change", (e) => { const i = target(e) as HTMLInputElement; if (i.dataset.u) { i.checked ? pl.picked.add(i.dataset.u) : pl.picked.delete(i.dataset.u); renderPlaylist(); } });
+$("pl-all").onclick = () => { pl.picked = pl.picked.size === pl.items.length ? new Set() : new Set(pl.items.map((e) => e.url)); renderPlaylist(); };
+$("pl-go").onclick = async () => {
+  const entries = pl.items.filter((e) => pl.picked.has(e.url)).map((e) => ({ url: e.url, title: e.title }));
+  const n = await invoke("add_playlist", { entries, mode: pl.mode }).catch(() => 0);
+  $("dlg-playlist").close();
+  if (state.view !== "all" && state.view !== "active") state.view = "all";
+  toast(`Adding ${n} download${n === 1 ? "" : "s"}`, "dl");
+};
+
+// ---------- find files on a page ----------
+type Found = { url: string; name: string };
+const grab = { all: [] as Found[], picked: new Set<string>(), cat: "File", q: "" };
+const looksLikeFile = (n: string) => /\.[a-z0-9]{2,5}$/i.test(n) && !/\.(html?|php|aspx?|jsp|js|css|json|xml|map)$/i.test(n);
+function grabVisible(): Found[] {
+  return grab.all.filter((f) => (grab.cat === "File" ? looksLikeFile(f.name) : grab.cat === "All" ? true : looksLikeFile(f.name) && catOf(f.name) === grab.cat));
+}
+function renderGrab() {
+  const list = grabVisible();
+  const cats = ["File", ...Object.keys(CATS).filter((c) => c !== "Other" && grab.all.some((f) => looksLikeFile(f.name) && catOf(f.name) === c)), "All"];
+  $("grab-chips").innerHTML = cats.map((c) => `<button type="button" class="chip${c === grab.cat ? " on" : ""}" data-c="${c}"><span>${c === "File" ? "All files" : c === "All" ? "Every link" : c}</span></button>`).join("");
+  $("grab-list").innerHTML = list.map((f) => `<label class="grab-row"><input type="checkbox" data-u="${esc(f.url)}"${grab.picked.has(f.url) ? " checked" : ""}><span class="gn" title="${esc(f.url)}">${esc(f.name || f.url)}</span><span class="gh">${esc(host(f.url))}</span></label>`).join("") || `<p class="muted" style="padding:10px 12px">Nothing here.</p>`;
+  const n = grab.picked.size;
+  $("grab-go").disabled = !n;
+  $("grab-go").textContent = n ? `Download ${n} file${n === 1 ? "" : "s"}` : "Download";
+  $("grab-all").textContent = list.length && list.every((f) => grab.picked.has(f.url)) ? "Select none" : "Select all";
+}
+async function loadGrab() {
+  const url = $("grab-url").value.trim();
+  if (!/^https?:\/\//i.test(url)) return;
+  $("grab-state").textContent = "Reading the page…";
+  try {
+    grab.all = await invoke("grab_page", { url });
+    grab.picked.clear();
+    $("grab-state").textContent = grab.all.length ? `${grabVisible().length} files on this page` : "No links found on this page";
+    renderGrab();
+  } catch (e) { $("grab-state").textContent = `Couldn't read that page: ${e}`; }
+}
+$("add-grab").onclick = () => {
+  const url = $("add-url").value.trim();
+  $("dlg-add").close();
+  $("grab-url").value = /^https?:\/\//i.test(url) ? url : "";
+  grab.all = []; grab.picked.clear(); grab.cat = "File"; $("grab-state").textContent = ""; renderGrab();
+  $("dlg-grab").showModal();
+  $("grab-url").focus();
+  if ($("grab-url").value) loadGrab();
+};
+$("grab-x").onclick = () => $("dlg-grab").close();
+$("grab-url").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); loadGrab(); } });
+$("grab-url").addEventListener("paste", () => setTimeout(loadGrab, 50));
+$("grab-chips").addEventListener("click", (e) => { const b = target(e).closest<HTMLElement>("[data-c]"); if (b) { grab.cat = b.dataset.c!; renderGrab(); } });
+$("grab-list").addEventListener("change", (e) => { const i = target(e) as HTMLInputElement; if (i.dataset.u) { i.checked ? grab.picked.add(i.dataset.u) : grab.picked.delete(i.dataset.u); renderGrab(); } });
+$("grab-all").onclick = () => { const list = grabVisible(); const all = list.every((f) => grab.picked.has(f.url)); list.forEach((f) => (all ? grab.picked.delete(f.url) : grab.picked.add(f.url))); renderGrab(); };
+$("grab-go").onclick = async () => {
+  const n = await invoke("add_links", { text: [...grab.picked].join("\n") }).catch(() => 0);
+  $("dlg-grab").close();
+  if (state.view !== "all" && state.view !== "active") state.view = "all";
+  toast(`Adding ${n} download${n === 1 ? "" : "s"}`, "dl");
+};
+
+// Several links, or a [01-50] pattern: add them all at once.
+$("add-url").addEventListener("paste", async (e) => {
+  const text = e.clipboardData?.getData("text") || "";
+  if (!/\s/.test(text.trim()) && !/\[\d+-\d+\]/.test(text)) return;
+  e.preventDefault();
+  const n = await invoke("add_links", { text }).catch(() => 0);
+  if (!n) return toast("No links found in what you pasted", "err");
+  $("dlg-add").close();
+  if (state.view !== "all" && state.view !== "active") state.view = "all";
+  toast(`Adding ${n} download${n === 1 ? "" : "s"}`, "dl");
+});
 $("add-url").addEventListener("input", () => { clearTimeout(add.timer); add.timer = window.setTimeout(probe, 400); });
 $("add-chips").addEventListener("click", async (e) => {
   if (!target(e).closest<HTMLElement>("#add-folder")) return;
@@ -850,7 +997,42 @@ function nextPending() {
 }
 
 // ---------- settings ----------
-let setDir = "", setLimitKib = 0, setThemeChoice = "system", setSeed = "stop";
+// Interface size: the whole window scales (the download windows keep their size).
+const applyScale = (pct?: number) => { document.documentElement.style.zoom = String((pct && pct >= 80 && pct <= 160 ? pct : 100) / 100); };
+let setScale = 100, setDebridProvider = "realdebrid", setVideoDef = "ask";
+function renderVideoDef() { $("set-videodef").querySelectorAll<HTMLElement>("[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === setVideoDef)); }
+$("set-videodef").addEventListener("click", (e) => { const b = target(e).closest<HTMLElement>("[data-v]"); if (b) { setVideoDef = b.dataset.v!; renderVideoDef(); } });
+// The local API needs a secret: make one when it is turned on without one.
+const apiHint = () => { $("set-api-hint").textContent = `Web remote: http://127.0.0.1:${$("set-api-port").value || 6800}   ·   For tools: /jsonrpc`; };
+$("set-api").addEventListener("change", () => {
+  if ($("set-api").checked && !$("set-api-secret").value.trim()) {
+    $("set-api-secret").value = [...crypto.getRandomValues(new Uint8Array(12))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+});
+$("set-api-port").addEventListener("input", apiHint);
+function renderScale() { $("set-scale").querySelectorAll<HTMLElement>("[data-v]").forEach((b) => b.classList.toggle("on", Number(b.dataset.v) === setScale)); }
+$("set-scale").addEventListener("click", (e) => { const b = target(e).closest<HTMLElement>("[data-v]"); if (b) { setScale = Number(b.dataset.v); renderScale(); applyScale(setScale); } });
+function renderDebridProvider() { $("set-debrid-provider").querySelectorAll<HTMLElement>("[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === setDebridProvider)); }
+$("set-debrid-provider").addEventListener("click", (e) => { const b = target(e).closest<HTMLElement>("[data-v]"); if (b) { setDebridProvider = b.dataset.v!; renderDebridProvider(); } });
+let setDir = "", setLimitKib = 0, setThemeChoice = "system", setSeed = "stop", setWhenDone = "nothing", setStartAt = 0;
+function renderWhenDone() {
+  $("set-whendone").querySelectorAll<HTMLElement>("[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === setWhenDone));
+}
+$("set-whendone").addEventListener("click", (e) => { const b = target(e).closest<HTMLElement>("[data-v]"); if (b) { setWhenDone = b.dataset.v!; renderWhenDone(); } });
+// "Start at 02:00" means the next 02:00: tonight, or tomorrow if it has passed.
+function nextTime(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  const d = new Date(); d.setHours(h, m, 0, 0);
+  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+  return d.getTime();
+}
+function renderStartAt() {
+  const on = setStartAt > Date.now();
+  $("set-startat").value = on ? new Date(setStartAt).toTimeString().slice(0, 5) : "";
+  $("set-startat-hint").textContent = on ? `Downloads wait until ${new Date(setStartAt).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}` : "Downloads wait until this time, once";
+}
+$("set-startat").addEventListener("change", () => { setStartAt = $("set-startat").value ? nextTime($("set-startat").value) : 0; renderStartAt(); });
+$("set-startat-clear").addEventListener("click", () => { setStartAt = 0; renderStartAt(); });
 function renderSeed() {
   $("set-seed").querySelectorAll<HTMLElement>("[data-v]").forEach((b) => b.classList.toggle("on", b.dataset.v === setSeed));
 }
@@ -866,19 +1048,39 @@ $("set-theme").addEventListener("click", (e) => {
   renderThemeChoice();
   window.setTheme(setThemeChoice);
 });
-const restoreTheme = () => window.setTheme(settings().theme);
+const restoreTheme = () => { window.setTheme(settings().theme); applyScale(settings().uiScale); };
 $("dlg-settings").addEventListener("cancel", restoreTheme); // Escape
-$("dlg-settings").addEventListener("close", restoreTheme);
+$("dlg-settings").addEventListener("close", () => { restoreTheme(); applyScale(state.settings?.uiScale); });
 function openSettings(tab = "general") {
   const s = settings();
   setThemeChoice = s.theme || "system";
   renderThemeChoice();
   setSeed = s.seedUntil || "stop";
   renderSeed();
+  setWhenDone = s.whenDone || "nothing";
+  renderWhenDone();
+  setStartAt = s.startAt || 0;
+  renderStartAt();
   setDir = s.downloadDir; $("set-dir").textContent = setDir;
   $("set-sort").checked = s.sortIntoCategories;
   $("set-ask").checked = s.askBeforeDownload;
   $("set-notify").checked = s.notifyOnComplete;
+  $("set-clip").checked = s.watchClipboard;
+  $("set-extract").checked = s.extractArchives;
+  $("set-proxy").value = s.proxy || "";
+  $("set-bind").value = s.bindAddress || "";
+  $("set-debrid").value = s.debridToken || "";
+  setDebridProvider = s.debridProvider || "realdebrid";
+  renderDebridProvider();
+  setScale = s.uiScale || 100;
+  renderScale();
+  setVideoDef = s.videoDefault || "ask";
+  renderVideoDef();
+  $("set-api").checked = s.apiEnabled;
+  $("set-api-port").value = String(s.apiPort || 6800);
+  $("set-api-secret").value = s.apiSecret || "";
+  $("set-api-lan").checked = s.apiLan;
+  apiHint();
   $("set-offer").checked = s.offerExtension;
   $("set-progress-win").checked = s.showProgressWindow;
   $("set-tray").checked = s.closeToTray;
@@ -993,6 +1195,18 @@ $("form-settings").addEventListener("submit", async (e) => {
     speedLimitKib: setLimitKib,
     askBeforeDownload: $("set-ask").checked,
     notifyOnComplete: $("set-notify").checked,
+    watchClipboard: $("set-clip").checked,
+    extractArchives: $("set-extract").checked,
+    proxy: $("set-proxy").value.trim(),
+    bindAddress: $("set-bind").value.trim(),
+    debridProvider: setDebridProvider,
+    debridToken: $("set-debrid").value.trim(),
+    uiScale: setScale,
+    videoDefault: setVideoDef,
+    apiEnabled: $("set-api").checked && !!$("set-api-secret").value.trim(),
+    apiPort: clamp($("set-api-port").value, 1024, 65535, 6800),
+    apiSecret: $("set-api-secret").value.trim(),
+    apiLan: $("set-api-lan").checked && $("set-api-secret").value.trim().length >= 12,
     offerExtension: $("set-offer").checked,
     showProgressWindow: $("set-progress-win").checked,
     closeToTray: $("set-tray").checked,
@@ -1004,6 +1218,8 @@ $("form-settings").addEventListener("submit", async (e) => {
     welcomeDone: settings().welcomeDone,
     theme: setThemeChoice,
     seedUntil: setSeed,
+    whenDone: setWhenDone,
+    startAt: setStartAt,
   });
   $("dlg-settings").close();
   toast("Settings saved", "ok");
@@ -1136,6 +1352,7 @@ async function boot() {
   const s = await invoke("get_state");
   state.settings = s.settings;
   window.setTheme(s.settings.theme);
+  applyScale(s.settings.uiScale);
   state.pending = s.pending;
   const info = await invoke("app_info").catch(() => null);
   state.tag = info?.tag ?? ""; state.repo = info?.repo ?? "";
@@ -1154,6 +1371,8 @@ async function boot() {
   setInterval(() => { if (!state.integration?.lastSeen || ++tick % 8 === 0) loadIntegration(); }, 2000);
   window.addEventListener("focus", () => loadIntegration());
   await listen("downloads", (e) => ingest(e.payload));
+  // A one-time setting finished (when-done fired, or the queue's start time came).
+  await listen("settings", (e) => { state.settings = e.payload; if ($("dlg-settings").open) openSettings(); });
   await listen("incoming", () => invoke("get_state").then((s) => { state.pending.push(...s.pending); nextPending(); }));
   setInterval(() => {
     if (!state.items.some((i) => i.status === "downloading")) {

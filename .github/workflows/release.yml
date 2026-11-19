@@ -225,6 +225,20 @@ jobs:
           releaseId: ${{ needs.create-release.outputs.id }}
           args: ${{ matrix.installer }}
 
+      # Apps already installed pick their Windows installer as the first file ending
+      # in "-setup.exe", so the ARM64 one must not end that way: an x64 PC given it
+      # sees "This app can't run on your PC".
+      - name: Rename the ARM64 installer
+        if: matrix.platform == 'windows-11-arm'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/${{ needs.create-release.outputs.id }}/assets" --paginate \
+            --jq '.[] | select(.name | endswith("_arm64-setup.exe")) | "\(.id) \(.name)"' | while read -r id name; do
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/assets/$id" -f name="${name%-setup.exe}_installer.exe"
+          done
+
   extension:
     needs: create-release
     if: needs.create-release.outputs.skip != 'true'

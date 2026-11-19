@@ -41,6 +41,84 @@ pub fn is_media_url(url: &str) -> bool {
     SITES.iter().any(|s| host == *s || host.ends_with(&format!(".{s}")))
 }
 
+/// Spotify's music is copy-protected, so no downloader can save it.
+pub const SPOTIFY_MSG: &str = "Spotify's music is copy-protected, so SwiftDL can't download it.";
+
+pub fn is_spotify(url: &str) -> bool {
+    url::Url::parse(url).ok().and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase())).is_some_and(|h| h == "spotify.com" || h.ends_with(".spotify.com"))
+}
+
+/// A YouTube playlist page (/playlist?list=...). A watch link that only carries
+/// `list=` is one video from a playlist and stays one video.
+pub fn is_playlist_url(url: &str) -> bool {
+    let Ok(u) = url::Url::parse(url) else { return false };
+    let host = u.host_str().unwrap_or("").to_ascii_lowercase();
+    let youtube = host == "youtube.com" || host.ends_with(".youtube.com");
+    youtube && u.path() == "/playlist" && u.query_pairs().any(|(k, v)| k == "list" && !v.is_empty())
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaylistEntry {
+    pub url: String,
+    pub title: String,
+    pub duration: Option<f64>,
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Playlist {
+    pub title: String,
+    pub entries: Vec<PlaylistEntry>,
+}
+
+/// yt-dlp's flat playlist answer, without the videos that are gone.
+fn parse_playlist(v: &Value) -> Result<Playlist> {
+    let entries: Vec<PlaylistEntry> = v["entries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| {
+            let title = e["title"].as_str()?.trim().to_string();
+            if title.is_empty() || title == "[Private video]" || title == "[Deleted video]" {
+                return None;
+            }
+            let url = match (e["url"].as_str(), e["id"].as_str()) {
+                (Some(u), _) if u.starts_with("http") => u.to_string(),
+                (_, Some(id)) => format!("https://www.youtube.com/watch?v={id}"),
+                _ => return None,
+            };
+            Some(PlaylistEntry { url, title, duration: e["duration"].as_f64() })
+        })
+        .take(500)
+        .collect();
+    if entries.is_empty() {
+        bail!("that playlist has no videos SwiftDL can download");
+    }
+    Ok(Playlist { title: v["title"].as_str().unwrap_or("Playlist").to_string(), entries })
+}
+
+/// The videos in a playlist, for the person to choose from.
+pub async fn playlist(client: &Client, url: &str, headers: Vec<(String, String)>) -> Result<Playlist> {
+    if is_spotify(url) {
+        bail!("{SPOTIFY_MSG}");
+    }
+    let tools = ensure_tools(client, &PROBE_NOTE, false).await?;
+    *PROBE_NOTE.lock().unwrap() = None;
+    let json = ytdlp_run(tools.ytdlp, url.to_string(), headers, false, &["--flat-playlist", "--yes-playlist"]).await?;
+    parse_playlist(&serde_json::from_slice(&json).context("yt-dlp gave an unexpected answer")?)
+}
+
+/// What a playlist choice means: the format, the file's extension and its category.
+/// Audio is the best AAC; video is up to 1080p or the best there is.
+pub fn playlist_format(mode: &str) -> (&'static str, &'static str, &'static str) {
+    match mode {
+        "audio" => ("ba[ext=m4a]/ba", "m4a", "Music"),
+        "best" => ("bv*+ba/b", "mp4", "Video"),
+        _ => ("bv*[height<=1080][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b", "mp4", "Video"),
+    }
+}
+
 /// Live status text for a media download ("Merging video and audio").
 pub type Note = Arc<Mutex<Option<String>>>;
 
@@ -228,6 +306,16 @@ pub async fn update_tools(client: &Client) -> Result<()> {
     *note.lock().unwrap() = None;
     result
 }
+/// macOS marks files written by a program that was itself downloaded in a
+/// browser, and a program launched from the browser's extension inherits that.
+/// yt-dlp then unpacks its Python.framework into a quarantined folder and macOS
+/// reports it "damaged" (#21). Clearing the mark from our tools folder avoids it.
+#[cfg(target_os = "macos")]
+fn strip_quarantine() {
+    let _ = Command::new("xattr").args(["-dr", "com.apple.quarantine"]).arg(tools_dir()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+}
+#[cfg(not(target_os = "macos"))]
+fn strip_quarantine() {}
 
 /// Downloads yt-dlp (and ffmpeg on Windows) if they're missing.
 async fn ensure_tools(client: &Client, note: &Note, need_ffmpeg: bool) -> Result<Tools> {
@@ -242,8 +330,10 @@ async fn ensure_tools(client: &Client, note: &Note, need_ffmpeg: bool) -> Result
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&ytdlp, std::fs::Permissions::from_mode(0o755))?;
         }
+        strip_quarantine();
         stamp_update();
     } else {
+        strip_quarantine();
         update_in_background(&ytdlp);
     }
     if need_ffmpeg && ffmpeg_dir().is_none() && cfg!(windows) {
@@ -285,6 +375,7 @@ async fn fetch(client: &Client, url: &str, dest: &Path, note: &Note, label: &str
         headers: Default::default(),
         restart: false,
         post_body: None,
+        mirrors: vec![],
     };
     let progress = Arc::new(Progress::default());
     let ticker = {
@@ -404,7 +495,29 @@ fn command(program: &Path) -> Command {
 
 /// Passes the browser's headers on to yt-dlp. Stream servers often refuse
 /// requests without the page's cookies, referrer or user agent.
+/// The proxy from Settings, passed to yt-dlp (empty: its own default).
+static PROXY: LazyLock<Mutex<String>> = LazyLock::new(Default::default);
+
+pub fn set_proxy(proxy: &str) {
+    *PROXY.lock().unwrap() = proxy.trim().to_string();
+}
+
+/// The local address from Settings, passed to yt-dlp as --source-address.
+static BIND: LazyLock<Mutex<String>> = LazyLock::new(Default::default);
+
+pub fn set_bind(address: &str) {
+    *BIND.lock().unwrap() = address.trim().to_string();
+}
+
 fn add_headers(cmd: &mut Command, headers: &[(String, String)]) {
+    let proxy = PROXY.lock().unwrap().clone();
+    if !proxy.is_empty() {
+        cmd.arg("--proxy").arg(proxy);
+    }
+    let bind = BIND.lock().unwrap().clone();
+    if !bind.is_empty() {
+        cmd.arg("--source-address").arg(bind);
+    }
     for (name, value) in headers.iter().filter(|(_, v)| !v.is_empty()) {
         match name.to_ascii_lowercase().as_str() {
             "referer" => { cmd.arg("--referer").arg(value); }
@@ -611,6 +724,9 @@ const PROBE_LIMIT: Duration = Duration::from_secs(90);
 /// Only if that comes back short (an error, or nothing above 480p) does it
 /// ask again with the runtime. The download itself always gets the runtime.
 pub async fn probe(client: &Client, url: &str, headers: Vec<(String, String)>) -> Result<MediaInfo> {
+    if is_spotify(url) {
+        bail!("{SPOTIFY_MSG}");
+    }
     let tools = ensure_tools(client, &PROBE_NOTE, false).await?;
     *PROBE_NOTE.lock().unwrap() = None;
     let quick = read_info(tools.ytdlp.clone(), url.to_string(), headers.clone(), false).await;
@@ -632,14 +748,25 @@ pub async fn probe(client: &Client, url: &str, headers: Vec<(String, String)>) -
 
 /// Runs `yt-dlp -J` and returns its JSON, giving up after PROBE_LIMIT.
 async fn ytdlp_json(ytdlp: PathBuf, url: String, headers: Vec<(String, String)>, with_js: bool) -> Result<Vec<u8>> {
+    ytdlp_run(ytdlp, url, headers, with_js, &["--no-playlist"]).await
+}
+
+/// `yt-dlp -J` with `mode` options (one video, or a flat list of a playlist's videos).
+async fn ytdlp_run(ytdlp: PathBuf, url: String, headers: Vec<(String, String)>, with_js: bool, mode: &'static [&'static str]) -> Result<Vec<u8>> {
     let url_for_log = url.clone();
     let out = tauri::async_runtime::spawn_blocking(move || -> Result<std::process::Output> {
         let mut cmd = if with_js { ytdlp_command(&ytdlp) } else { command(&ytdlp) };
-        cmd.args(["-J", "--no-playlist", "--no-warnings", "--socket-timeout", "20"]);
+        cmd.arg("-J").args(mode).args(["--no-warnings", "--socket-timeout", "20"]);
         add_headers(&mut cmd, &headers_for(&url, &headers, with_js));
-        let mut child = cmd.arg(&url).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().context("couldn't start yt-dlp")?;
+        // Plain anonymous pipes, as the common Windows launchers make. Rust's own
+        // `Stdio::piped()` is a named pipe, and on some PCs yt-dlp's Python can't
+        // write to it ("[Errno 22] Invalid argument", seen on Bilibili).
+        let (mut so, so_w) = os_pipe::pipe()?;
+        let (mut se, se_w) = os_pipe::pipe()?;
+        let mut child = cmd.arg(&url).stdout(so_w).stderr(se_w).spawn().context("couldn't start yt-dlp")?;
+        // The command still holds the write ends; without this the readers never see the end.
+        drop(cmd);
         // Read both pipes on their own threads so a full pipe can't stall yt-dlp.
-        let (mut so, mut se) = (child.stdout.take().unwrap(), child.stderr.take().unwrap());
         let out = std::thread::spawn(move || { let mut b = vec![]; let _ = so.read_to_end(&mut b); b });
         let err = std::thread::spawn(move || { let mut b = vec![]; let _ = se.read_to_end(&mut b); b });
         let start = std::time::Instant::now();
@@ -779,24 +906,39 @@ fn qualities(info: &Value) -> Vec<Quality> {
     let mut heights: Vec<u64> = videos.iter().filter_map(|f| f["height"].as_u64()).collect();
     heights.sort_unstable_by(|a, b| b.cmp(a));
     heights.dedup();
+    // HDR is its own choice: on a video with HDR10 or HLG, a plain "2160p" used
+    // to pick the HDR stream, which looks washed out on an ordinary screen.
+    let is_hdr = |f: &Value| f["dynamic_range"].as_str().is_some_and(|d| d != "SDR");
     let mut list: Vec<Quality> = heights
         .into_iter()
-        .map(|h| {
+        .flat_map(|h| {
             let at: Vec<&&Value> = videos.iter().filter(|f| f["height"].as_u64() == Some(h)).collect();
-            let best = at.iter().copied().max_by(|a, b| tbr(a).total_cmp(&tbr(b))).copied();
-            let fps = at.iter().filter_map(|f| f["fps"].as_f64()).fold(0.0, f64::max);
-            let progressive = best.is_some_and(|f| has(f, "acodec"));
-            let size = best.and_then(size_of).map(|v| if progressive { v } else { v + audio_size.unwrap_or(0) });
-            Quality {
-                label: if fps > 30.5 { format!("{h}p{}", fps.round()) } else { format!("{h}p") },
-                // H.264 + AAC first: it plays everywhere. AV1/VP9 only
-                // where a site has nothing else (1440p and 4K).
-                format: format!(
-                    "bv*[height={h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height={h}]+ba[ext=m4a]/bv*[height={h}]+ba/b[height={h}]/bv*[height<={h}]+ba/b"
-                ),
-                ext: "mp4".into(),
-                size,
+            let hdr: Vec<&&Value> = at.iter().copied().filter(|f| is_hdr(f)).collect();
+            let sdr: Vec<&&Value> = at.iter().copied().filter(|f| !is_hdr(f)).collect();
+            let entry = |set: &Vec<&&Value>, hdr_label: bool, format: String| -> Quality {
+                let best = set.iter().copied().max_by(|a, b| tbr(a).total_cmp(&tbr(b))).copied();
+                let fps = set.iter().filter_map(|f| f["fps"].as_f64()).fold(0.0, f64::max);
+                let progressive = best.is_some_and(|f| has(f, "acodec"));
+                let size = best.and_then(size_of).map(|v| if progressive { v } else { v + audio_size.unwrap_or(0) });
+                let base = if fps > 30.5 { format!("{h}p{}", fps.round()) } else { format!("{h}p") };
+                Quality { label: if hdr_label { format!("{base} HDR") } else { base }, format, ext: "mp4".into(), size }
+            };
+            // H.264 + AAC first: it plays everywhere. AV1/VP9 only where YouTube has
+            // nothing else (1440p and 4K). Where HDR exists, the plain choice stays SDR.
+            let plain = if hdr.is_empty() {
+                format!("bv*[height={h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height={h}]+ba[ext=m4a]/bv*[height={h}]+ba/b[height={h}]/bv*[height<={h}]+ba/b")
+            } else {
+                format!("bv*[height={h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height={h}][dynamic_range=?SDR]+ba[ext=m4a]/bv*[height={h}][dynamic_range=?SDR]+ba/b[height={h}]/bv*[height<={h}][dynamic_range=?SDR]+ba/b")
+            };
+            let hdr_format = format!("bv*[height={h}][dynamic_range~=\"HDR|HLG|DV\"]+ba[ext=m4a]/bv*[height={h}][dynamic_range~=\"HDR|HLG|DV\"]+ba");
+            let mut out = vec![];
+            if !hdr.is_empty() {
+                out.push(entry(&hdr, true, hdr_format));
             }
+            if !sdr.is_empty() || hdr.is_empty() {
+                out.push(entry(if sdr.is_empty() { &at } else { &sdr }, false, plain));
+            }
+            out
         })
         .collect();
     if let Some(a) = best_audio {
@@ -818,6 +960,16 @@ fn last_error(stderr: &str) -> Option<String> {
     let e = stderr.lines().rev().find_map(|l| l.strip_prefix("ERROR: ")).map(|e| e.trim().to_string())?;
     if e.contains("Requested format is not available") && js_runtime().is_none() {
         return Some("This site needs a JavaScript runtime for yt-dlp. Install Node.js or Deno, then try again.".into());
+    }
+    // A stream address the site no longer serves: links like these expire, or
+    // work once, and "generic" is yt-dlp's name for a plain address.
+    if e.contains("[generic]") && (e.contains("HTTP Error 404") || e.contains("HTTP Error 403") || e.contains("HTTP Error 410")) {
+        return Some("The site no longer gives out this stream link. Such links can expire or work only once: play the video again in the browser, then use SwiftDL on it.".into());
+    }
+    // yt-dlp's advice names its own flags, which mean nothing here.
+    let lower = e.to_lowercase();
+    if lower.contains("--cookies") || lower.contains("logged-in") || lower.contains("authentication is required") || lower.contains("login required") {
+        return Some("This site needs you to be signed in. Download it with the SwiftDL extension in a browser where you're signed in, so your session is passed on.".into());
     }
     Some(e)
 }
@@ -966,7 +1118,7 @@ async fn direct(client: &Client, job: &Job, progress: &Arc<Progress>, note: &Not
                 headers.insert(k, v);
             }
         }
-        let req = swiftdl_engine::Request { url: f["url"].as_str().unwrap_or_default().to_string(), dest: path.clone(), connections: YOUTUBE_CONNECTIONS, headers, restart: false, post_body: None };
+        let req = swiftdl_engine::Request { url: f["url"].as_str().unwrap_or_default().to_string(), dest: path.clone(), connections: YOUTUBE_CONNECTIONS, headers, restart: false, post_body: None, mirrors: vec![] };
         let (p, cancel, limiter) = (p.clone(), cancel.clone(), limiter.clone());
         async move { swiftdl_engine::run(client, &req, p, cancel, limiter).await }
     });
@@ -1050,16 +1202,22 @@ async fn attempt(tools: &Tools, job: &Job, progress: &Arc<Progress>, note: &Note
         Some(saved) => { cmd.arg("--load-info-json").arg(saved); }
         None => { cmd.arg(&job.url); }
     }
-    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().context("couldn't start yt-dlp")?;
+    // Plain anonymous pipes; see ytdlp_json.
+    let (stdout, out_w) = os_pipe::pipe()?;
+    let (mut stderr, err_w) = os_pipe::pipe()?;
+    let child = cmd.stdout(out_w).stderr(err_w).spawn().context("couldn't start yt-dlp")?;
+    drop(cmd);
 
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
     let errors = Arc::new(Mutex::new(String::new()));
     {
         let errors = errors.clone();
         std::thread::spawn(move || {
-            let text: String = BufReader::new(stderr).lines().map_while(Result::ok).collect::<Vec<_>>().join("\n");
-            *errors.lock().unwrap() = text;
+            // Read bytes, not lines of UTF-8: stopping at the first byte that isn't
+            // valid UTF-8 (yt-dlp writes the PC's own code page) would close the pipe
+            // on yt-dlp, and its next write fails with "[Errno 22]".
+            let mut bytes = vec![];
+            let _ = stderr.read_to_end(&mut bytes);
+            *errors.lock().unwrap() = String::from_utf8_lossy(&bytes).into_owned();
         });
     }
     let reader = {
@@ -1101,7 +1259,17 @@ fn read_progress(stdout: impl std::io::Read, progress: &Progress, note: &Note) {
     let num = |s: &str| s.trim().parse::<f64>().ok().filter(|n| n.is_finite() && *n > 0.0).map(|n| n as u64);
     let (mut base, mut cur) = (0u64, 0u64);
     let hint = progress.total.load(Ordering::Relaxed);
-    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+    // Lines as raw bytes, converted leniently: an odd byte must never end the
+    // reading, or the pipe closes under yt-dlp (see attempt).
+    let mut reader = BufReader::new(stdout);
+    let mut raw = Vec::new();
+    loop {
+        raw.clear();
+        if !matches!(reader.read_until(b'\n', &mut raw), Ok(n) if n > 0) {
+            break;
+        }
+        let line = String::from_utf8_lossy(&raw);
+        let line = line.trim_end();
         if let Some(rest) = line.strip_prefix("SDL|") {
             let f: Vec<&str> = rest.split('|').collect();
             if f.len() < 4 {
@@ -1154,6 +1322,62 @@ mod tests {
         assert_eq!(super::headers_for(yt, &h, false).len(), 1);
         assert_eq!(super::headers_for(yt, &h, true).len(), 2);
         assert_eq!(super::headers_for("https://vimeo.com/1", &h, false).len(), 2);
+    }
+
+    #[test]
+    fn sign_in_errors_are_put_plainly() {
+        let vimeo = "ERROR: [vimeo] 1: The web client only works when logged-in. Use --cookies, --cookies-from-browser, --username and --password";
+        assert!(super::last_error(vimeo).unwrap().starts_with("This site needs you to be signed in"));
+        assert_eq!(super::last_error("ERROR: [x] 1: Video unavailable").unwrap(), "[x] 1: Video unavailable");
+    }
+
+    #[test]
+    fn expired_stream_links_are_explained() {
+        let e = "ERROR: [generic] 82134615: Unable to download webpage: HTTP Error 404: Not Found (caused by <HTTPError 404: Not Found>)";
+        assert!(super::last_error(e).unwrap().starts_with("The site no longer gives out this stream link"));
+    }
+
+    #[test]
+    fn hdr_is_its_own_choice() {
+        let info = serde_json::json!({ "formats": [
+            { "format_id": "313", "height": 2160, "vcodec": "vp9", "acodec": "none", "dynamic_range": "SDR", "tbr": 9000.0, "filesize": 400, "fps": 24.0 },
+            { "format_id": "701", "height": 2160, "vcodec": "av01.0.12M.10", "acodec": "none", "dynamic_range": "HDR10", "tbr": 12000.0, "filesize": 600, "fps": 24.0 },
+            { "format_id": "137", "height": 1080, "vcodec": "avc1.640028", "acodec": "none", "dynamic_range": "SDR", "tbr": 4000.0, "filesize": 100, "fps": 24.0 },
+            { "format_id": "140", "ext": "m4a", "vcodec": "none", "acodec": "mp4a.40.2", "tbr": 128.0, "filesize": 10 },
+        ]});
+        let q = super::qualities(&info);
+        let labels: Vec<&str> = q.iter().map(|q| q.label.as_str()).collect();
+        assert_eq!(labels, ["2160p HDR", "2160p", "1080p", "Audio only"]);
+        assert!(q[0].format.contains("dynamic_range~="), "the HDR choice asks for HDR streams");
+        assert!(q[1].format.contains("dynamic_range=?SDR"), "the plain 2160p must not fall back to HDR");
+        assert!(!q[2].format.contains("dynamic_range"), "a height with no HDR keeps the old selector");
+        assert_eq!((q[0].size, q[1].size), (Some(610), Some(410)));
+    }
+
+    #[test]
+    fn playlists_are_spotted_and_read() {
+        assert!(is_playlist_url("https://www.youtube.com/playlist?list=PLabc123"));
+        assert!(is_playlist_url("https://music.youtube.com/playlist?list=OLAK5uy"));
+        assert!(!is_playlist_url("https://www.youtube.com/watch?v=abc&list=PLabc123"), "one video from a playlist stays one video");
+        assert!(!is_playlist_url("https://www.youtube.com/playlist") && !is_playlist_url("https://vimeo.com/playlist?list=1"));
+        let v = serde_json::json!({ "title": "Mix", "entries": [
+            { "id": "aaa", "url": "https://www.youtube.com/watch?v=aaa", "title": "First", "duration": 235 },
+            { "id": "bbb", "title": "No address given", "duration": null },
+            { "id": "ccc", "title": "[Private video]" },
+            { "id": "ddd", "title": "[Deleted video]" },
+            { "url": "https://www.youtube.com/watch?v=eee", "title": "  Fifth  " },
+        ]});
+        let p = parse_playlist(&v).unwrap();
+        assert_eq!(p.title, "Mix");
+        assert_eq!(p.entries, vec![
+            PlaylistEntry { url: "https://www.youtube.com/watch?v=aaa".into(), title: "First".into(), duration: Some(235.0) },
+            PlaylistEntry { url: "https://www.youtube.com/watch?v=bbb".into(), title: "No address given".into(), duration: None },
+            PlaylistEntry { url: "https://www.youtube.com/watch?v=eee".into(), title: "Fifth".into(), duration: None },
+        ]);
+        assert!(parse_playlist(&serde_json::json!({ "entries": [] })).is_err());
+        assert_eq!(playlist_format("audio").1, "m4a");
+        assert!(playlist_format("high").0.contains("height<=1080") && !playlist_format("best").0.contains("height"));
+        assert!(is_spotify("https://open.spotify.com/playlist/37i9") && !is_spotify("https://notspotify.com/x"));
     }
 
     #[test]
@@ -1220,6 +1444,49 @@ mod tests {
 mod live {
     /// `cargo test --release live_youtube -- --ignored --nocapture` with
     /// SWIFTDL_YT_URL and SWIFTDL_YT_OUT set. Downloads 1080p for real.
+    /// Runs the same lookup the app does, for any URL in SWIFTDL_PROBE_URL.
+    /// SWIFTDL_PL_URL=https://www.youtube.com/playlist?list=... cargo test live_playlist -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn live_playlist() {
+        let url = std::env::var("SWIFTDL_PL_URL").unwrap();
+        let client = swiftdl_engine::build_client().unwrap();
+        let t = std::time::Instant::now();
+        let p = tauri::async_runtime::block_on(super::playlist(&client, &url, vec![])).unwrap();
+        println!("PLAYLIST {:?}: {} videos in {:.1}s; first: {:?}", p.title, p.entries.len(), t.elapsed().as_secs_f64(), p.entries.first());
+    }
+
+    #[test]
+    #[ignore]
+    fn live_probe() {
+        let url = std::env::var("SWIFTDL_PROBE_URL").unwrap();
+        let ytdlp = super::ytdlp_path();
+        for with_js in [false, true] {
+            let r = tauri::async_runtime::block_on(super::ytdlp_json(ytdlp.clone(), url.clone(), vec![], with_js));
+            match r {
+                Ok(j) => println!("with_js={with_js}: ok, {} bytes", j.len()),
+                Err(e) => println!("with_js={with_js}: FAILED: {e:#}"),
+            }
+        }
+    }
+
+    /// Downloads the smallest quality of SWIFTDL_DL_URL to SWIFTDL_DL_OUT through
+    /// the same code path as the app. Run it with PYTHONIOENCODING=gbk to act
+    /// like a Chinese-language Windows.
+    #[test]
+    #[ignore]
+    fn live_download() {
+        let url = std::env::var("SWIFTDL_DL_URL").unwrap();
+        let dest = std::path::PathBuf::from(std::env::var("SWIFTDL_DL_OUT").unwrap());
+        let client = swiftdl_engine::build_client().unwrap();
+        let job = super::Job { url, format: "wv*+wa/w".into(), dest: dest.clone(), headers: vec![], subs: None };
+        let r = tauri::async_runtime::block_on(super::run(&client, job, Default::default(), Default::default(), Default::default()));
+        match r {
+            Ok(o) => println!("RESULT {o:?}, {} bytes", std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0)),
+            Err(e) => println!("RESULT FAILED: {e:#}"),
+        }
+    }
+
     #[test]
     #[ignore]
     fn live_youtube() {
@@ -1232,7 +1499,7 @@ mod live {
             super::prepare(&client, &url, vec![]).await;
             println!("lookup: {:.1}s", t.elapsed().as_secs_f64());
             let t = std::time::Instant::now();
-            let job = super::Job { url, format, dest: dest.clone(), headers: vec![] };
+            let job = super::Job { url, format, dest: dest.clone(), headers: vec![], subs: None };
             let r = super::run(&client, job, Default::default(), Default::default(), Default::default()).await.unwrap();
             println!("{r:?}: download + join {:.1}s, {} bytes", t.elapsed().as_secs_f64(), std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0));
         });

@@ -182,6 +182,13 @@ function postFor(...urls) {
   return { url: rec.url, body: btoa(bin), contentType: rec.contentType || "application/x-www-form-urlencoded", filename: rec.filename };
 }
 
+// "Download in browser" in the app opens the link with #swiftdl-browser on the
+// end. The browser then keeps that one download, with its own session.
+const browserOnce = new Map();
+const markBrowser = (u) => { if (typeof u === "string" && u.includes("#swiftdl-browser")) browserOnce.set(u.split("#")[0], Date.now() + 60000); };
+chrome.tabs.onCreated.addListener((t) => markBrowser(t.pendingUrl || t.url));
+chrome.tabs.onUpdated.addListener((_id, info) => markBrowser(info.url));
+
 chrome.downloads.onCreated.addListener(async (item) => {
   const settings = await getSettings();
   const url = item.finalUrl || item.url;
@@ -190,6 +197,7 @@ chrome.downloads.onCreated.addListener(async (item) => {
   // blob:, data: and file: URLs only exist inside the browser.
   if (!/^https?:/i.test(url)) return;
   if (Date.now() < bypassUntil) { bypassUntil = 0; await log(`#${item.id} Alt held: left to the browser`); return; }
+  if ([item.url, item.finalUrl, url].some((u) => u && (browserOnce.get(String(u).split("#")[0]) || 0) > Date.now())) { await log(`#${item.id} kept by the browser, as asked in SwiftDL`); return; }
   if (await siteDisabled(item.referrer, url)) { await log(`#${item.id} site switched off: left to the browser`); return; }
   if (settings.minSizeKB > 0 && item.totalBytes > 0 && item.totalBytes < settings.minSizeKB * 1024) return;
 

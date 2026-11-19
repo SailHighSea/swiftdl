@@ -15,6 +15,7 @@ uses [Semantic Versioning](https://semver.org/).
   page's video, not an "up next" video linked near the player.
 
 ### Added
+- Merged upstream SwiftDL 0.4.2: ftp:// and Metalink/mirror downloads, SHA-256 check, archive unpacking, proxies, debrid services, site grabber, YouTube playlists, HDR quality, skip-the-video-window setting, queue order, aria2-compatible API and web remote, the Windows ARM64 installer fix (see the 0.4.x entries below).
 - The video button's quality menu on YouTube and streams has a **More options…**
   row that opens SwiftDL's New download window with every choice (video and
   audio stream, codec, container, subtitles) instead of a fixed quality.
@@ -48,6 +49,89 @@ uses [Semantic Versioning](https://semver.org/).
   "Form (POST) downloads" switch in the extension popup turns this off so the
   browser handles them; the per-site switch already skips a whole site.
 - Show in folder on the download-complete window now closes the window.
+
+## [0.4.2] - 2026-11-18
+
+### Added
+- **Select several downloads** (Ctrl/Cmd+click, Shift+click, Ctrl+A) and remove,
+  pause or resume them together (#12).
+- **Skip the video window.** Settings > General > Video links: start straight
+  away at up to 1080p, the best available, or audio only (#17).
+- **YouTube playlists.** Paste a playlist link to choose which videos to take,
+  as video (up to 1080p or the best available) or as audio only (#17).
+  Spotify links say plainly that its music is copy-protected.
+- **HDR as its own quality choice** ("2160p HDR" next to "2160p") (#15). A plain
+  "2160p" used to pick the HDR stream on videos that have one.
+
+### Fixed
+- **In-app update on Windows x64 installed the ARM64 installer**, which Windows
+  refuses to run ("This app can't run on your PC"). The updater now picks the
+  installer for the PC's own CPU, and the ARM64 installer is named
+  `..._arm64_installer.exe` so older versions can't pick it by mistake.
+- The New download window was cut off at the bottom since 0.4.0 added the
+  SHA-256 row (#14). It starts taller and resizes more reliably.
+- Firefox-based browsers (Zen, LibreWolf, Waterfox, Floorp, Mullvad) are
+  recognised as Firefox, so SwiftDL shows them as connected (#18).
+- macOS: yt-dlp's Python.framework was reported "damaged" on YouTube pages
+  (#21). SwiftDL now clears macOS's quarantine mark from its tools folder.
+  Not tested on a Mac.
+- The extension popup says why it can't reach SwiftDL, for example when only
+  the .exe was copied and not installed (#16).
+
+## [0.4.1] - 2026-11-14
+
+### Changed
+- The video button on web pages is calmer: a flat button, and after sending it
+  says "Sent" with a tick in the button itself instead of opening a box with
+  one line of green text. Short messages and problems appear in a note sized
+  to its words.
+
+## [0.4.0] - 2026-11-10
+
+### Added
+- **More kinds of downloads.** `ftp://` links with resume; Metalink files
+  (`.meta4`, `.metalink`) that download one file from several mirrors at once
+  (the engine checks each mirror's size and falls over to another if one
+  fails); a SHA-256 field that checks the finished file; and unpacking of
+  finished `.zip`, `.tar.gz`, `.tar` and `.7z` archives (optional).
+- **File-hosting links through a debrid service.** Real-Debrid, AllDebrid or
+  Premiumize, with your own API token.
+- **Find files on a page.** New download > Find files on a page lists the
+  files a page links to, with category filters, and downloads the ones you pick.
+- **Paste many links at once**, including patterns like `file[01-50].zip`.
+- **Automation.** Quit, sleep or shut down when all downloads finish (once),
+  and hold the queue until a chosen time.
+- **Queue.** Waiting downloads show their place ("Queued #2"), "Download next"
+  moves one to the front, "Clear" removes finished downloads from the list,
+  and the tray has "Ignore speed limit".
+- **Network.** SOCKS5 proxies, a network address to send downloads out from
+  (a dropped VPN stops downloads instead of leaking), and an optional
+  clipboard watcher.
+- **Local API and web remote** (off by default). An aria2-compatible API for
+  tools like AriaNg and scripts, and SwiftDL's own web page to watch and
+  control downloads from a browser or phone. Needs a secret on every call, is
+  local-only unless you allow your network, and refuses non-local hosts.
+- **Interface size** setting (90 to 150%).
+- **Replace a dead link.** Right-click a failed or paused download > Replace
+  link from clipboard keeps the parts already downloaded.
+- **Packaging.** An experimental Windows ARM64 build, and a script that writes
+  winget and Homebrew files for a release.
+
+### Changed
+- Downloads now follow the system's proxy settings (they had been ignoring
+  them).
+- The extension asks the site before taking a download over from the browser.
+  If the site refuses (403, a sign-in page), the browser keeps the download.
+- A failed download has a "Download in browser" button.
+- Plainer messages for sign-in-only videos and expired stream links.
+
+### Fixed
+- Google Drive share links now download the file instead of a warning page,
+  and a link that answers with a web page instead of a file fails clearly.
+- A tab left open for hours offered a stale stream; it now offers the newest.
+- Possible fix for Bilibili failing with `[Errno 22]` on some Windows PCs
+  (yt-dlp's output is read as raw bytes through plain pipes). Not reproduced
+  here, so not confirmed.
 
 ## [0.3.5] - 2026-11-07
 
@@ -286,7 +370,10 @@ uses [Semantic Versioning](https://semver.org/).
 - GitHub Actions for CI and tagged releases (Windows, macOS, Linux and the
   extension zip).
 
-[Unreleased]: https://github.com/harshsinghsv/swiftdl/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/harshsinghsv/swiftdl/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/harshsinghsv/swiftdl/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/harshsinghsv/swiftdl/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/harshsinghsv/swiftdl/compare/v0.3.5...v0.4.0
 [0.3.5]: https://github.com/harshsinghsv/swiftdl/compare/v0.3.3...v0.3.5
 [0.3.3]: https://github.com/harshsinghsv/swiftdl/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/harshsinghsv/swiftdl/compare/v0.3.1...v0.3.2

@@ -103,9 +103,14 @@
         box-shadow: 0 0 0 2px #3b82f6, 0 6px 20px rgba(0,0,0,.35); backdrop-filter: blur(14px) saturate(1.5); }
       .btn:hover { background: rgba(30, 31, 38, .94); box-shadow: 0 0 0 2px #60a5fa, 0 6px 20px rgba(0,0,0,.35); }
       .btn .chev { opacity: .6; margin-left: 2px; transition: transform .15s; }
+      .btn .tick { display: none; }
+      .btn.done .chev { display: none; }
+      .btn.done .tick { display: block; }
       .wrap.open .btn .chev { transform: rotate(180deg); }
-      .panel { width: 320px; padding: 6px; border-radius: 12px; background: rgba(22, 23, 28, .94); color: #eef0f3;
-        box-shadow: 0 0 0 1px rgba(255,255,255,.1), 0 16px 48px rgba(0,0,0,.5); backdrop-filter: blur(18px) saturate(1.5); display: none; }
+      .panel { width: 320px; padding: 5px; border-radius: 10px; background: #17181c; color: #eef0f3;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,.12), 0 8px 24px rgba(0,0,0,.35); display: none; }
+      /* one line of news (looking, reading, a problem): as wide as the words */
+      .panel.note { width: auto; max-width: 280px; padding: 8px 11px; }
       .wrap.open .panel { display: block; animation: pop .14s ease-out; }
       @keyframes pop { from { opacity: 0; transform: translateY(-4px); } }
       .head { padding: 6px 8px 6px; font-size: 11.5px; font-weight: 600; color: #8a8e98; }
@@ -125,10 +130,11 @@
       .qrow:hover { background: rgba(255,255,255,.08); }
       .qrow .sz { margin-left: auto; font-weight: 500; font-size: 12px; color: #8a8e98; }
       .qsep { height: 1px; margin: 4px 6px; background: rgba(255,255,255,.08); }
-      .msg { padding: 10px 8px 12px; font-size: 12.5px; color: #a4a8b1; line-height: 1.5; }
-      .msg.ok { color: #4cb782; } .msg.err { color: #eb6b6b; }
+      .msg { font-size: 12.5px; color: #c7cad1; line-height: 1.45; }
+      .panel:not(.note) .msg { padding: 8px 8px 10px; color: #a4a8b1; }
+      .msg.err { color: #f0b3ae; }
     </style>
-    <div class="wrap"><button class="btn" title="Download with SwiftDL">${LOGO}<span>Download video</span><svg class="chev" width="10" height="10" viewBox="0 0 10 10"><path d="M2 3.5l3 3 3-3" stroke="#fff" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg></button><div class="panel"></div></div>`;
+    <div class="wrap"><button class="btn" title="Download with SwiftDL">${LOGO}<span>Download video</span><svg class="chev" width="10" height="10" viewBox="0 0 10 10"><path d="M2 3.5l3 3 3-3" stroke="#fff" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg><svg class="tick" width="11" height="11" viewBox="0 0 12 12"><path d="M2.4 6.3l2.4 2.4 4.8-5.2" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></button><div class="panel"></div></div>`;
     wrap = root.querySelector(".wrap");
     btn = root.querySelector(".btn");
     panel = root.querySelector(".panel");
@@ -141,6 +147,18 @@
     wrap.addEventListener("mouseenter", () => clearTimeout(hideTimer));
     wrap.addEventListener("mouseleave", () => scheduleHide());
     mount();
+  }
+
+  // News in the panel (looking, reading, a problem), sized to its words.
+  function note(html) {
+    panel.classList.remove("q");
+    panel.classList.add("note");
+    panel.innerHTML = `<div class="msg">${html}</div>`;
+  }
+  // The button says what is happening itself; "Sent" gets a tick.
+  function label(text, done = false) {
+    btn.querySelector("span").textContent = text || "Download video";
+    btn.classList.toggle("done", done);
   }
 
   function mount() {
@@ -201,9 +219,21 @@
   function scheduleHide() { clearTimeout(hideTimer); if (!open) hideTimer = setTimeout(hide, 1600); }
   function setOpen(v) { open = v; wrap?.classList.toggle("open", v); }
 
+  // Which captured stream is the video being watched. `items` is newest first.
+  // A tab that stays open collects streams from every video played in it, and
+  // their links expire, so the oldest is often stale. Prefer the newest playlist
+  // that lists several qualities (the main one); failing that, the oldest of the
+  // recent ones, since a player loads its main playlist first.
+  function pickStream(items) {
+    const streams = items.filter((m) => m.kind === "hls" || m.kind === "dash");
+    const main = streams.find((m) => m.qualities?.length > 1) || streams.find((m) => m.qualities?.length);
+    if (main || !streams.length) return main || null;
+    return streams.filter((m) => streams[0].at - m.at < 60000).at(-1);
+  }
+
   async function toggle() {
     if (open) { setOpen(false); return; }
-    panel.classList.remove("q");
+    panel.classList.remove("q", "note");
     setOpen(true);
     if (/(^|\.)youtube\.com$/i.test(location.hostname) && (await youtubeMenu())) return;
     if (onVideoSite()) {
@@ -219,18 +249,18 @@
     try { res = await chrome.runtime.sendMessage({ type: "media" }); } catch { res = { items: [] }; }
     // Any site: if the player loaded a stream (HLS or DASH), list its
     // qualities now. The oldest one is the main playlist with every quality.
-    const hls = (res?.items || []).filter((m) => m.kind === "hls" || m.kind === "dash").at(-1);
+    const hls = pickStream(res?.items || []);
     if (hls?.qualities?.length) { qualityMenu(hls.url, title(), hls.qualities); return; }
     if (hls && (await streamMenu(hls.url))) return;
     if (onVideoSite()) return grab(location.href, title());
-    panel.innerHTML = `<div class="msg">Looking for downloadable files…</div>`;
+    note("Looking for downloadable files…");
     const items = [...(res?.items || [])];
     const src = video?.currentSrc;
     if (src && /^https?:/i.test(src) && !items.some((m) => m.url === src)) items.unshift({ url: src, kind: "file", mime: "video/mp4", size: 0 });
     const files = items.filter((m) => m.kind === "file");
     // A player loads its main playlist first, then one per quality: the
     // oldest stream is the main one, which lets SwiftDL offer every quality.
-    const stream = items.filter((m) => m.kind !== "file").at(-1);
+    const stream = pickStream(items);
     const name = title();
     let html = "";
     if (files.length) {
@@ -245,6 +275,7 @@
       html += `<div class="head">Stream</div><button class="item" data-url="${encodeURI(stream.url).replace(/"/g, "%22")}" data-name="${name.replace(/"/g, "'")}.mp4"><span class="tag stream">${stream.kind.toUpperCase()}</span><span class="meta"><b>This video</b><span>Choose the quality in SwiftDL</span></span></button>`;
     }
     if (!files.length && !stream) html = `<div class="msg">${onVideoSite() ? "This video has no link of its own (it may be an ad). Open the video's page, for example by clicking its time or title, and try again." : "No downloadable file found yet. Play the video for a moment, then try again."}</div>`;
+    panel.classList.remove("note");
     panel.innerHTML = html;
   }
 
@@ -273,17 +304,22 @@
     const m4a = audios.filter((f) => f.mime.startsWith("audio/mp4"));
     const audioSize = Math.max(0, ...(m4a.length ? m4a : audios).map((f) => f.size));
     const heights = [...new Set(videos.map((f) => f.height))].sort((a, b) => b - a);
-    const list = heights.map((h) => {
-      const at = videos.filter((f) => f.height === h);
-      const best = at.reduce((a, b) => (b.bitrate > a.bitrate ? b : a));
-      const fps = Math.max(...at.map((f) => f.fps));
-      return {
-        label: fps > 30.5 ? `${h}p${Math.round(fps)}` : `${h}p`,
-        format: `bv*[height=${h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height=${h}]+ba[ext=m4a]/bv*[height=${h}]+ba/b[height=${h}]/bv*[height<=${h}]+ba/b`,
-        ext: "mp4",
-        size: best.size ? best.size + audioSize : null,
-      };
-    });
+    const list = [];
+    // HDR is its own choice (same selectors as the app's own lookup): a plain
+    // "2160p" would otherwise pick the HDR stream on a video that has one.
+    const entry = (set, h, hdr, format) => {
+      const best = set.reduce((a, b) => (b.bitrate > a.bitrate ? b : a));
+      const fps = Math.max(...set.map((f) => f.fps));
+      return { label: `${h}p${fps > 30.5 ? Math.round(fps) : ""}${hdr ? " HDR" : ""}`, format, ext: "mp4", size: best.size ? best.size + audioSize : null };
+    };
+    for (const h of heights) {
+      const at = videos.filter((f) => f.height === h), hdr = at.filter((f) => f.hdr), sdr = at.filter((f) => !f.hdr);
+      const plain = hdr.length
+        ? `bv*[height=${h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height=${h}][dynamic_range=?SDR]+ba[ext=m4a]/bv*[height=${h}][dynamic_range=?SDR]+ba/b[height=${h}]/bv*[height<=${h}][dynamic_range=?SDR]+ba/b`
+        : `bv*[height=${h}][vcodec^=avc1]+ba[ext=m4a]/bv*[height=${h}]+ba[ext=m4a]/bv*[height=${h}]+ba/b[height=${h}]/bv*[height<=${h}]+ba/b`;
+      if (hdr.length) list.push(entry(hdr, h, true, `bv*[height=${h}][dynamic_range~="HDR|HLG|DV"]+ba[ext=m4a]/bv*[height=${h}][dynamic_range~="HDR|HLG|DV"]+ba`));
+      if (sdr.length || !hdr.length) list.push(entry(sdr.length ? sdr : at, h, false, plain));
+    }
     if (audios.length) list.push({ label: "Audio only", format: "ba[ext=m4a]/ba", ext: m4a.length ? "m4a" : "webm", size: audioSize || null });
     return list;
   }
@@ -304,6 +340,7 @@
   function qualityMenu(url, name, qualities) {
     const row = (q, i) => `<button class="qrow" data-q="${i}"><span>${q.label}</span><span class="sz">${q.size ? bytes(q.size) : ""}</span></button>`;
     const audio = qualities.findIndex((q) => q.label === "Audio only");
+    panel.classList.remove("note");
     panel.classList.add("q");
     // "More options": send the page without a chosen quality, so SwiftDL's
     // own window opens with every choice (video and audio stream, codec,
@@ -321,7 +358,7 @@
     }));
   }
   async function streamMenu(url) {
-    panel.innerHTML = `<div class="msg">Reading qualities…</div>`;
+    note("Reading qualities…");
     let res;
     try { res = await chrome.runtime.sendMessage({ type: "streamQualities", url }); } catch { res = null; }
     if (!res?.qualities?.length) return false;
@@ -330,12 +367,20 @@
   }
 
   async function grab(url, filename, extra = {}) {
-    panel.classList.remove("q");
-    panel.innerHTML = `<div class="msg">Sending to SwiftDL…</div>`;
+    // Close the menu; the button itself reports progress.
+    setOpen(false);
+    label("Sending…");
     let res;
     try { res = await chrome.runtime.sendMessage({ type: "grab", url: decodeURI(url), filename, ...extra }); } catch (e) { res = { ok: false, error: String(e?.message || e) }; }
-    panel.innerHTML = res?.ok ? `<div class="msg ok">Sent to SwiftDL ✓</div>` : `<div class="msg err">${failure(res?.error || "")}</div>`;
-    setTimeout(() => { setOpen(false); scheduleHide(); }, 1800);
+    if (res?.ok) {
+      label("Sent", true);
+      setTimeout(() => { label(); scheduleHide(); }, 1800);
+    } else {
+      label();
+      note(`<span class="err">${failure(res?.error || "")}</span>`);
+      setOpen(true);
+      setTimeout(() => { setOpen(false); scheduleHide(); }, 7000);
+    }
   }
 
   // Find the video under the pointer, even when the site layers controls

@@ -35,6 +35,10 @@ pub struct Request {
     /// When set, the file is fetched with a POST carrying this body (a form
     /// button on a web page). Such downloads are one stream, not resumable.
     pub post_body: Option<Vec<u8>>,
+    /// Other addresses of the same file. Each is checked (same size, byte
+    /// ranges allowed); the ones that pass share the connections, and a
+    /// connection whose server fails moves on to another.
+    pub mirrors: Vec<String>,
 }
 
 /// Live numbers a front end can poll from any thread.
@@ -64,7 +68,8 @@ pub enum Outcome {
 
 struct Shared {
     client: Client,
-    url: String,
+    /// The file's address, then any mirrors that passed the check.
+    urls: Vec<String>,
     headers: header::HeaderMap,
     file: File,
     table: Mutex<Table>,
@@ -122,7 +127,32 @@ impl Shared {
 }
 
 pub fn build_client() -> Result<Client> {
-    Ok(Client::builder()
+    build_client_with("")
+}
+
+/// `proxy` is an address like `http://127.0.0.1:8080`; empty follows the
+/// system's proxy settings.
+pub fn build_client_with(proxy: &str) -> Result<Client> {
+    build_client_opts(proxy, "")
+}
+
+/// As `build_client_with`, and `bind` is a local address (like a VPN adapter's)
+/// that every connection must go out from. If that address disappears, for
+/// example the VPN drops, connections fail rather than use another route.
+pub fn build_client_opts(proxy: &str, bind: &str) -> Result<Client> {
+    let mut builder = Client::builder();
+    if let Ok(ip) = bind.trim().parse::<std::net::IpAddr>() {
+        builder = builder.local_address(ip);
+    }
+    let proxy = proxy.trim();
+    if !proxy.is_empty() {
+        // An address reqwest can't use (say, a SOCKS one) is ignored: the
+        // system's proxy settings apply instead.
+        if let Ok(p) = reqwest::Proxy::all(proxy) {
+            builder = builder.proxy(p);
+        }
+    }
+    Ok(builder
         // HTTP/2 would multiplex every range over ONE connection and share
         // one congestion window, which defeats the point. Force HTTP/1.1 so
         // each segment gets its own TCP connection.
@@ -201,9 +231,11 @@ async fn download_segmented(
         }
     };
 
+    let mut urls = vec![remote.url.clone()];
+    urls.extend(usable_mirrors(&client, req, size).await);
     let shared = Arc::new(Shared {
         client,
-        url: remote.url.clone(),
+        urls,
         headers: req.headers.clone(),
         file,
         table: Mutex::new(Table {
@@ -244,8 +276,8 @@ async fn download_segmented(
     };
 
     let mut workers = JoinSet::new();
-    for _ in 0..req.connections.max(1) {
-        workers.spawn(worker(shared.clone()));
+    for id in 0..req.connections.max(1) {
+        workers.spawn(worker(shared.clone(), id));
     }
 
     let result: Result<bool> = tokio::select! {
@@ -281,12 +313,22 @@ async fn download_segmented(
     }
 }
 
+/// The mirrors that really hold this file: they answer, allow byte ranges and
+/// report the same size.
+async fn usable_mirrors(client: &Client, req: &Request, size: u64) -> Vec<String> {
+    let checks = req.mirrors.iter().map(|m| async move {
+        let r = tokio::time::timeout(Duration::from_secs(10), probe(client, m, &req.headers)).await.ok()?.ok()?;
+        (r.resumable && r.size == Some(size)).then_some(r.url)
+    });
+    futures_util::future::join_all(checks).await.into_iter().flatten().collect()
+}
+
 /// One connection's life: take a segment, download it, take another (or
 /// steal half of someone else's), until there is nothing worth taking.
-async fn worker(shared: Arc<Shared>) -> Result<()> {
+async fn worker(shared: Arc<Shared>, id: usize) -> Result<()> {
     while let Some(seg) = shared.claim() {
         shared.progress.connections.fetch_add(1, Ordering::Relaxed);
-        let result = download_segment(&shared, &seg).await;
+        let result = download_segment(&shared, &seg, id).await;
         shared.progress.connections.fetch_sub(1, Ordering::Relaxed);
         result?;
     }
@@ -296,14 +338,16 @@ async fn worker(shared: Arc<Shared>) -> Result<()> {
 /// Downloads one segment, reconnecting from where it left off on errors.
 /// The retry counter resets whenever an attempt makes progress, so only a
 /// connection that is truly stuck gives up.
-async fn download_segment(shared: &Shared, seg: &Segment) -> Result<()> {
+async fn download_segment(shared: &Shared, seg: &Segment, id: usize) -> Result<()> {
     let mut failures = 0u32;
     loop {
         let (pos, end) = seg.range();
         if pos >= end {
             return Ok(());
         }
-        let result = fetch_range(shared, seg, pos, end).await;
+        // Each connection has its own server; after a failure, the next one.
+        let url = &shared.urls[(id + failures as usize) % shared.urls.len()];
+        let result = fetch_range(shared, url, seg, pos, end).await;
         let progressed = seg.range().0 > pos;
         if progressed {
             failures = 0;
@@ -329,10 +373,10 @@ async fn download_segment(shared: &Shared, seg: &Segment) -> Result<()> {
     }
 }
 
-async fn fetch_range(shared: &Shared, seg: &Segment, pos: u64, end: u64) -> Result<()> {
+async fn fetch_range(shared: &Shared, url: &str, seg: &Segment, pos: u64, end: u64) -> Result<()> {
     let resp = shared
         .client
-        .get(&shared.url)
+        .get(url)
         .headers(shared.headers.clone())
         .header(header::RANGE, format!("bytes={}-{}", pos, end - 1))
         .send()
@@ -449,6 +493,16 @@ pub fn part_path(dest: &Path) -> PathBuf {
 }
 
 /// The still-missing ranges of a paused download, from its resume file.
+/// Points a paused download's saved progress at a new address for the same
+/// file (a link that expired and was replaced). The size and the server's
+/// validators are still checked when it resumes, so a different file starts over.
+pub fn rebase_saved(dest: &Path, new_url: &str) -> bool {
+    let path = append_ext(dest, "swiftdl");
+    let Some(mut s) = SavedState::load(&path) else { return false };
+    s.url = new_url.to_string();
+    s.save(&path).is_ok()
+}
+
 pub fn saved_remaining(dest: &Path) -> Option<Vec<(u64, u64)>> {
     SavedState::load(&append_ext(dest, "swiftdl")).map(|s| s.segments)
 }
@@ -458,4 +512,165 @@ fn append_ext(path: &Path, ext: &str) -> PathBuf {
     s.push(".");
     s.push(ext);
     PathBuf::from(s)
+}
+
+#[cfg(test)]
+mod rebase_tests {
+    use super::*;
+
+    #[test]
+    fn a_refreshed_link_keeps_its_progress() {
+        let dest = std::env::temp_dir().join("swiftdl-rebase-test.bin");
+        let state = SavedState { url: "https://x/f?token=old".into(), size: 100, etag: Some("e".into()), last_modified: None, segments: vec![(40, 100)] };
+        state.save(&append_ext(&dest, "swiftdl")).unwrap();
+        assert!(!state.matches("https://x/f?token=new", 100, &Some("e".into()), &None), "a different address would start over");
+        assert!(rebase_saved(&dest, "https://x/f?token=new"));
+        let moved = SavedState::load(&append_ext(&dest, "swiftdl")).unwrap();
+        assert!(moved.matches("https://x/f?token=new", 100, &Some("e".into()), &None));
+        assert!(!moved.matches("https://x/f?token=new", 101, &Some("e".into()), &None), "a different size still starts over");
+        assert_eq!(moved.segments, vec![(40, 100)]);
+        let _ = std::fs::remove_file(append_ext(&dest, "swiftdl"));
+        assert!(!rebase_saved(&dest, "https://x/f"), "nothing saved, nothing to move");
+    }
+}
+
+#[cfg(test)]
+mod mirror_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::sync::atomic::AtomicUsize;
+
+    /// A small server for one file. `total` is the size it claims; `flaky`
+    /// makes it fail every request except the first byte (which passes the check).
+    fn serve(data: Arc<Vec<u8>>, total: usize, flaky: bool, hits: Arc<AtomicUsize>) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let (data, hits) = (data.clone(), hits.clone());
+                std::thread::spawn(move || {
+                    let mut s = stream;
+                    let mut buf = [0u8; 2048];
+                    let n = s.read(&mut buf).unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                    hits.fetch_add(1, Ordering::Relaxed);
+                    let range = head.lines().find_map(|l| l.to_lowercase().strip_prefix("range: bytes=").map(str::to_string)).unwrap_or_default();
+                    let (a, b) = range.trim().split_once('-').unwrap_or(("0", "0"));
+                    let (a, b): (usize, usize) = (a.parse().unwrap_or(0), b.parse().unwrap_or(0));
+                    if flaky && a != 0 {
+                        let _ = s.write_all(b"HTTP/1.1 500 Oops\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                        return;
+                    }
+                    let end = b.min(data.len() - 1);
+                    let body = &data[a.min(end)..=end];
+                    let _ = s.write_all(format!("HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {a}-{end}/{total}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes());
+                    let _ = s.write_all(body);
+                });
+            }
+        });
+        format!("http://127.0.0.1:{port}/file.bin")
+    }
+
+    async fn download(urls: Vec<String>, name: &str) -> Vec<u8> {
+        let dest = std::env::temp_dir().join(format!("swiftdl-mirror-{name}-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&dest);
+        let req = Request { url: urls[0].clone(), dest: dest.clone(), connections: 4, headers: Default::default(), restart: true, post_body: None, mirrors: urls[1..].to_vec() };
+        let client = build_client().unwrap();
+        let out = run(&client, &req, Arc::new(Progress::default()), CancellationToken::new(), Arc::new(SpeedLimiter::new(0))).await.unwrap();
+        assert_eq!(out, Outcome::Completed);
+        let got = std::fs::read(&dest).unwrap();
+        let _ = std::fs::remove_file(&dest);
+        got
+    }
+
+    #[tokio::test]
+    async fn mirrors_share_the_download_and_cover_for_a_failing_one() {
+        let data: Arc<Vec<u8>> = Arc::new((0..2_000_000u32).map(|i| (i % 251) as u8).collect());
+        let (ha, hb, hc, hd) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let a = serve(data.clone(), data.len(), false, ha.clone());
+        let b = serve(data.clone(), data.len(), false, hb.clone());
+        // Same bytes but it claims another size: must be left out.
+        let wrong = serve(data.clone(), data.len() + 5, false, hc.clone());
+        // Passes the check, then fails every real request.
+        let flaky = serve(data.clone(), data.len(), true, hd.clone());
+
+        let got = download(vec![a, b, wrong, flaky], "all").await;
+        assert!(got == *data, "the file must come out byte for byte");
+        assert!(ha.load(Ordering::Relaxed) > 1 && hb.load(Ordering::Relaxed) > 1, "both good mirrors carried parts");
+        assert_eq!(hc.load(Ordering::Relaxed), 1, "a mirror with the wrong size is only asked once, for the check");
+    }
+}
+
+#[cfg(test)]
+mod socks_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::sync::atomic::AtomicUsize;
+
+    fn web() -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for mut s in listener.incoming().flatten() {
+                let mut buf = [0u8; 1024];
+                let _ = s.read(&mut buf);
+                let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi");
+            }
+        });
+        port
+    }
+
+    /// A bare SOCKS5 server (no login, CONNECT only) that counts what it carries.
+    fn socks(hits: Arc<AtomicUsize>) -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for mut client in listener.incoming().flatten() {
+                let hits = hits.clone();
+                std::thread::spawn(move || {
+                    let mut b = [0u8; 300];
+                    client.read_exact(&mut b[..2]).unwrap();
+                    let n = b[1] as usize;
+                    client.read_exact(&mut b[..n]).unwrap();
+                    client.write_all(&[5, 0]).unwrap();
+                    client.read_exact(&mut b[..4]).unwrap();
+                    let host = match b[3] {
+                        1 => {
+                            client.read_exact(&mut b[..4]).unwrap();
+                            format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3])
+                        }
+                        3 => {
+                            client.read_exact(&mut b[..1]).unwrap();
+                            let len = b[0] as usize;
+                            client.read_exact(&mut b[..len]).unwrap();
+                            String::from_utf8_lossy(&b[..len]).into_owned()
+                        }
+                        _ => return,
+                    };
+                    client.read_exact(&mut b[..2]).unwrap();
+                    let port = u16::from_be_bytes([b[0], b[1]]);
+                    let Ok(target) = TcpStream::connect((host.as_str(), port)) else { return };
+                    client.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).unwrap();
+                    hits.fetch_add(1, Ordering::Relaxed);
+                    let (mut c2, mut t2) = (client.try_clone().unwrap(), target.try_clone().unwrap());
+                    std::thread::spawn(move || { let _ = std::io::copy(&mut c2, &mut t2); });
+                    let mut target = target;
+                    let _ = std::io::copy(&mut target, &mut client);
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn downloads_through_a_socks5_proxy() {
+        let target = web();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let proxy = socks(hits.clone());
+        let client = build_client_opts(&format!("socks5h://127.0.0.1:{proxy}"), "").unwrap();
+        let body = client.get(format!("http://localhost:{target}/")).send().await.unwrap().text().await.unwrap();
+        assert_eq!(body, "hi");
+        assert!(hits.load(Ordering::Relaxed) >= 1, "the request went through the proxy");
+    }
 }

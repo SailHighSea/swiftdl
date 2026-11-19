@@ -42,14 +42,25 @@ struct Asset {
 
 /// This platform's installer among a release's files.
 fn pick_asset(assets: &[Asset]) -> Option<String> {
-    let suffix = if cfg!(windows) {
-        "-setup.exe"
-    } else if cfg!(target_os = "macos") {
-        ".dmg"
-    } else {
-        return None; // Linux: .deb, .rpm or AppImage; the user picks on the release page.
-    };
-    assets.iter().find(|a| a.name.ends_with(suffix)).map(|a| a.browser_download_url.clone())
+    if cfg!(windows) {
+        return pick_windows(assets, cfg!(target_arch = "aarch64"));
+    }
+    if cfg!(target_os = "macos") {
+        return assets.iter().find(|a| a.name.ends_with(".dmg")).map(|a| a.browser_download_url.clone());
+    }
+    None // Linux: .deb, .rpm or AppImage; the user picks on the release page.
+}
+
+/// The Windows installer for this CPU. An ARM64 PC takes the ARM64 one; every
+/// other PC takes the x64 one and never the ARM64 one (Windows refuses to run it).
+fn pick_windows(assets: &[Asset], arm: bool) -> Option<String> {
+    let installers = assets.iter().filter(|a| a.name.ends_with("-setup.exe") || a.name.ends_with("_installer.exe"));
+    let mut found = installers.clone().find(|a| a.name.contains("arm64") == arm);
+    // An ARM64 PC with no ARM64 installer in the release runs the x64 one.
+    if found.is_none() && arm {
+        found = installers.clone().next();
+    }
+    found.map(|a| a.browser_download_url.clone())
 }
 
 #[derive(Serialize)]
@@ -109,7 +120,19 @@ pub async fn run_installer(_client: &Client, _url: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::key;
+    use super::{key, pick_windows, Asset};
+
+    #[test]
+    fn each_pc_gets_its_own_windows_installer() {
+        let names = |list: &[&str]| list.iter().map(|n| Asset { name: n.to_string(), browser_download_url: format!("https://x/{n}") }).collect::<Vec<_>>();
+        let both = names(&["SwiftDL_1_arm64-setup.exe", "SwiftDL_1_x64-setup.exe"]);
+        assert_eq!(pick_windows(&both, false).as_deref(), Some("https://x/SwiftDL_1_x64-setup.exe"));
+        assert_eq!(pick_windows(&both, true).as_deref(), Some("https://x/SwiftDL_1_arm64-setup.exe"));
+        let renamed = names(&["SwiftDL_1_arm64_installer.exe", "SwiftDL_1_x64-setup.exe"]);
+        assert_eq!(pick_windows(&renamed, false).as_deref(), Some("https://x/SwiftDL_1_x64-setup.exe"));
+        assert_eq!(pick_windows(&renamed, true).as_deref(), Some("https://x/SwiftDL_1_arm64_installer.exe"));
+        assert_eq!(pick_windows(&names(&["SwiftDL_1_arm64_installer.exe"]), false), None);
+    }
 
     #[test]
     fn orders_versions() {

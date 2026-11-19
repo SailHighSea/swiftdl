@@ -43,6 +43,21 @@ pub async fn probe_url(m: Mgr<'_>, url: String, headers: Vec<(String, String)>, 
         let category = category_for(&filename).to_string();
         return Ok(ProbeInfo { dir: m.default_dir(&category), filename, size: None, resumable: false, category });
     }
+    if crate::media::is_spotify(url.trim()) {
+        return Err(crate::media::SPOTIFY_MSG.into());
+    }
+    // A link on a debrid host: name and size come from the service.
+    let (service, token) = m.debrid();
+    if let Some(direct) = crate::debrid::resolve(m.client(), &service, &token, url.trim()).await.map_err(|e| format!("{e:#}"))? {
+        let category = category_for(&direct.filename).to_string();
+        return Ok(ProbeInfo { dir: m.default_dir(&category), filename: direct.filename, size: direct.size, resumable: true, category });
+    }
+    if crate::ftp::is_ftp(url.trim()) {
+        let u = url.trim().to_string();
+        let (filename, size) = tauri::async_runtime::spawn_blocking(move || crate::ftp::probe(&u)).await.map_err(|e| e.to_string())?.map_err(|e| format!("{e:#}"))?;
+        let category = category_for(&filename).to_string();
+        return Ok(ProbeInfo { dir: m.default_dir(&category), filename, size, resumable: true, category });
+    }
     let remote = swiftdl_engine::probe(m.client(), url.trim(), &to_header_map(&headers)).await.map_err(|e| format!("{e:#}"))?;
     let category = category_for(&remote.filename).to_string();
     Ok(ProbeInfo {
@@ -69,10 +84,10 @@ pub fn add_download(m: Mgr, req: AddRequest) -> Result<u64, String> {
 /// links and .torrent files on this computer.
 fn check_add(req: &AddRequest) -> Result<(), String> {
     let url = req.url.trim();
-    let web = url.starts_with("http://") || url.starts_with("https://");
+    let web = url.starts_with("http://") || url.starts_with("https://") || crate::ftp::is_ftp(url);
     let torrent = req.torrent_files.is_some() && (url.starts_with("magnet:") || std::path::Path::new(url).is_file());
     if !web && !torrent {
-        return Err("Only web links, magnet links and .torrent files are supported".into());
+        return Err("Only web, ftp and magnet links and .torrent files are supported".into());
     }
     if req.filename.trim().is_empty() {
         return Err("File name is empty".into());
@@ -270,6 +285,83 @@ pub async fn probe_media(m: Mgr<'_>, url: String, headers: Vec<(String, String)>
 
 /// A video-site link pasted into the main window: choose its quality in a
 /// "New download" window, like a link caught from the browser.
+/// Opens a link in the browser, marked so the SwiftDL extension lets the
+/// browser keep the download (it carries your signed-in session).
+#[tauri::command]
+pub fn open_in_browser(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    let base = url.trim().split('#').next().unwrap_or_default().to_string();
+    if !(base.starts_with("http://") || base.starts_with("https://")) {
+        return Err("That isn't a web link".into());
+    }
+    app.opener().open_url(format!("{base}#swiftdl-browser"), None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Site grabber: the links on one web page, for the user to pick from.
+#[tauri::command]
+pub async fn grab_page(m: Mgr<'_>, url: String) -> Result<Vec<crate::grabber::Found>, String> {
+    let page = url::Url::parse(url.trim()).map_err(|_| "That isn't a web link".to_string())?;
+    if !matches!(page.scheme(), "http" | "https") {
+        return Err("That isn't a web link".into());
+    }
+    let resp = m.client().get(page.as_str()).send().await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?;
+    let final_url = resp.url().clone();
+    // A page is text; a huge or binary answer is a file, not a page to read.
+    if resp.content_length().is_some_and(|n| n > 8_000_000) {
+        return Err("That's a large file, not a web page".into());
+    }
+    let html = resp.text().await.map_err(|e| e.to_string())?;
+    Ok(crate::grabber::find_links(&html, &final_url))
+}
+
+/// Whether a link is a playlist page (YouTube's /playlist?list=...).
+#[tauri::command]
+pub fn is_playlist_url(url: String) -> bool {
+    crate::media::is_playlist_url(url.trim())
+}
+
+/// The videos of a playlist, to choose from.
+#[tauri::command]
+pub async fn probe_playlist(m: Mgr<'_>, url: String) -> Result<crate::media::Playlist, String> {
+    crate::media::playlist(m.client(), url.trim(), vec![]).await.map_err(|e| format!("{e:#}"))
+}
+
+#[derive(serde::Deserialize)]
+pub struct PlaylistPick {
+    url: String,
+    title: String,
+}
+
+/// Adds the chosen playlist videos as separate downloads ("high", "best" or "audio").
+#[tauri::command]
+pub fn add_playlist(m: Mgr, entries: Vec<PlaylistPick>, mode: String) -> usize {
+    let list: Vec<(String, String)> = entries.into_iter().map(|e| (e.url, e.title)).collect();
+    m.add_playlist(&list, &mode)
+}
+
+/// Downloads the file a Metalink describes, from all its mirrors.
+#[tauri::command]
+pub async fn add_metalink(m: Mgr<'_>, url: String) -> Result<(String, usize), String> {
+    m.add_metalink(url.trim()).await
+}
+
+/// Puts a waiting download first in the queue.
+#[tauri::command]
+pub fn download_next(m: Mgr, id: u64) -> bool {
+    m.download_next(id)
+}
+
+/// Replaces a stopped download's address and resumes it.
+#[tauri::command]
+pub fn set_url(m: Mgr, id: u64, url: String) -> Result<(), String> {
+    m.set_url(id, &url)
+}
+
+/// Adds every link in pasted text (lists and `[01-50]` patterns). Returns how many.
+#[tauri::command]
+pub fn add_links(m: Mgr, text: String) -> usize {
+    m.add_links(&text)
+}
+
 #[tauri::command]
 pub fn open_new_download(m: Mgr, url: String) {
     m.new_download_window(Incoming { url: url.trim().to_string(), filename: None, referrer: None, cookies: None, user_agent: None, method: None, body: None, content_type: None, qualities: None, pick: None });
