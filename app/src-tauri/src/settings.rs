@@ -40,6 +40,37 @@ pub struct Settings {
     pub include_dev_builds: bool,
     /// Write ordinary events to the log file, not just errors and crashes.
     pub debug_log: bool,
+    /// Once all downloads are done: "nothing", "close", "sleep" or "shutdown".
+    /// Used once, then back to "nothing".
+    pub when_done: String,
+    /// Hold the queue until this time (ms since epoch). 0 = no schedule.
+    pub start_at: u64,
+    /// Proxy for downloads, e.g. "http://127.0.0.1:8080". Empty follows the
+    /// system's. Downloads use a change after SwiftDL restarts.
+    pub proxy: String,
+    /// Send downloads out from this local address only (a VPN adapter's, say).
+    pub bind_address: String,
+    /// When switching to SwiftDL, offer to download a link on the clipboard.
+    pub watch_clipboard: bool,
+    /// Unpack finished .zip, .tar.gz and .7z files into a folder beside them.
+    pub extract_archives: bool,
+    /// Interface size in percent (90-150).
+    pub ui_scale: u32,
+    /// What a video link does: "ask" (the New download window), or start at once
+    /// in "high" (best up to 1080p), "best" or "audio" (sound only).
+    pub video_default: String,
+    /// A local, aria2-compatible API for tools like AriaNg. Needs a restart.
+    pub api_enabled: bool,
+    pub api_port: u16,
+    /// Every API call must carry this secret. The API stays off while it is empty.
+    pub api_secret: String,
+    /// Also let other devices on the local network reach the API and the web
+    /// remote (a phone). Only used with a secret of 12 or more characters.
+    pub api_lan: bool,
+    /// Which debrid service the token is for: "realdebrid", "alldebrid" or "premiumize".
+    pub debrid_provider: String,
+    /// The service's API token. Empty = not used.
+    pub debrid_token: String,
 }
 
 impl Default for Settings {
@@ -63,6 +94,20 @@ impl Default for Settings {
             auto_update_check: true,
             include_dev_builds: false,
             debug_log: false,
+            when_done: "nothing".into(),
+            start_at: 0,
+            proxy: String::new(),
+            bind_address: String::new(),
+            watch_clipboard: false,
+            extract_archives: false,
+            ui_scale: 100,
+            video_default: "ask".into(),
+            api_enabled: false,
+            api_port: 6800,
+            api_secret: String::new(),
+            api_lan: false,
+            debrid_provider: "realdebrid".into(),
+            debrid_token: String::new(),
         }
     }
 }

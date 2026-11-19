@@ -19,7 +19,7 @@ declare global { interface Window { __video?: unknown } }
   let settings: Settings = {
     downloadDir: "C:\\Users\\you\\Downloads", connections: 8, maxConcurrent: 3, speedLimitKib: 0,
     sortIntoCategories: true, askBeforeDownload: true, notifyOnComplete: true,
-    offerExtension: true, onboardingDismissed: false, welcomeDone: false, showProgressWindow: true, closeToTray: true, theme: "system", seedUntil: "stop", startWithSystem: false, autoUpdateCheck: true, includeDevBuilds: false, debugLog: false,
+    offerExtension: true, onboardingDismissed: false, welcomeDone: false, showProgressWindow: true, closeToTray: true, theme: "system", seedUntil: "stop", startWithSystem: false, autoUpdateCheck: true, includeDevBuilds: false, debugLog: false, whenDone: "nothing", startAt: 0, proxy: "", bindAddress: "", watchClipboard: false, extractArchives: false, debridProvider: "realdebrid", debridToken: "", uiScale: 100, videoDefault: "ask", apiEnabled: false, apiPort: 6800, apiSecret: "", apiLan: false,
   };
   if (VIDEO) Object.assign(settings, { downloadDir: "C:\\Users\\Harsh\\Downloads", onboardingDismissed: true });
   const catFor = (name: string) => {
@@ -185,7 +185,21 @@ declare global { interface Window { __video?: unknown } }
     open_store: () => {}, open_extensions_page: () => {}, open_log: () => {},
     get_item: ({ id }) => JSON.parse(JSON.stringify(items.find((i) => i.id === id) || null)),
     confirm_info: () => (location.search.includes("torrent") ? { url: "magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Blender+Open+Movies", filename: "" } : VIDEO && !location.search.includes("yt") ? { url: "https://releases.ubuntu.com/26.04.1/ubuntu-26.04.1-desktop-amd64.iso", filename: "", referrer: "https://ubuntu.com/download/desktop" } : location.search.includes("yt") ? { url: "https://www.youtube.com/watch?v=aqz-KE-bpKQ", filename: "" } : { url: "https://cdn.example.net/releases/Obsidian-2.4.1-setup.exe", filename: "", referrer: "https://obsidian.example.net/download" }),
-    forget_confirm: () => {}, probe_note: () => null, show_main: () => {},
+    forget_confirm: () => {}, probe_note: () => null, set_url: () => {}, download_next: () => true, add_metalink: async () => ["ubuntu.iso", 3],
+    is_playlist_url: ({ url }: { url: string }) => /playlist\?list=/.test(url),
+    probe_playlist: async () => ({ title: "Popular Music Videos", entries: [
+      { url: "https://www.youtube.com/watch?v=a1", title: "BELLAKEO (Video Oficial) - Peso Pluma, Anitta", duration: 235 },
+      { url: "https://www.youtube.com/watch?v=a2", title: "Arcangel - FN8 (Video Lyric)", duration: 650 },
+      { url: "https://www.youtube.com/watch?v=a3", title: "Becky G - POR EL CONTRARIO (Performance Video)", duration: 235 },
+      { url: "https://www.youtube.com/watch?v=a4", title: "A very long title that needs to be cut off at the end of the row because it just keeps going", duration: 3723 },
+    ] }),
+    add_playlist: ({ entries }: { entries: unknown[] }) => entries.length,
+    grab_page: async () => [
+      { url: "https://example.com/guide.pdf", name: "guide.pdf" }, { url: "https://example.com/report.docx", name: "report.docx" },
+      { url: "https://example.com/photo1.jpg", name: "photo1.jpg" }, { url: "https://example.com/photo2.jpg", name: "photo2.jpg" },
+      { url: "https://example.com/talk.mp4", name: "talk.mp4" }, { url: "https://example.com/data.zip", name: "data.zip" },
+      { url: "https://example.com/about", name: "about" },
+    ], open_in_browser: () => {}, add_links: ({ text }: { text: string }) => text.split(/\s+/).filter((t) => /^https?:/i.test(t)).length, show_main: () => {},
     install_update: () => {},
     is_media_url: ({ url }) => /(^|\.)(youtube\.com|youtu\.be|vimeo\.com)\//.test(url.replace(/^https?:\/\//, "").replace(/^www\./, "")),
     open_new_download: () => {},

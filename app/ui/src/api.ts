@@ -33,6 +33,8 @@ export interface Item {
   torrentPrio?: number[];
   subtitles?: string | null;
   note: string | null;
+  checksum?: string | null;
+  verified?: boolean;
   peers?: number | null;
   seeds?: number | null;
 }
@@ -56,6 +58,32 @@ export interface Settings {
   autoUpdateCheck: boolean;
   includeDevBuilds: boolean;
   debugLog: boolean;
+  /** Once all downloads finish: "nothing", "close", "sleep" or "shutdown". */
+  whenDone: string;
+  /** The queue is held until this time (ms since epoch); 0 = no schedule. */
+  startAt: number;
+  /** Proxy for downloads, like http://127.0.0.1:8080; empty follows the system's. */
+  proxy: string;
+  /** Send downloads out from this local address only (a VPN adapter's). */
+  bindAddress: string;
+  /** Offer to download a link on the clipboard when switching to SwiftDL. */
+  watchClipboard: boolean;
+  /** Unpack finished archives beside themselves. */
+  extractArchives: boolean;
+  /** "realdebrid", "alldebrid" or "premiumize". */
+  debridProvider: string;
+  /** The service's API token; empty = not used. */
+  debridToken: string;
+  /** Interface size in percent (90-150). */
+  uiScale: number;
+  /** "ask", "high" (best up to 1080p), "best" or "audio". */
+  videoDefault: string;
+  /** A local aria2-compatible API; applies after a restart. */
+  apiEnabled: boolean;
+  apiPort: number;
+  apiSecret: string;
+  /** Let other devices on the network reach the API and the web remote. */
+  apiLan: boolean;
 }
 
 export interface Incoming {
@@ -88,11 +116,14 @@ export interface Stream {
 }
 export interface Subtitle { code: string; name: string; auto: boolean }
 export interface MediaInfo { title: string; site: string; duration: number | null; qualities: Quality[]; streams: Stream[]; subtitles: Subtitle[] }
+export interface PlaylistInfo { title: string; entries: { url: string; title: string; duration: number | null }[] }
+
 export interface TorrentInfo { name: string; size: number; files: { path: string; size: number }[] }
 export interface AddRequest {
   url: string; filename: string; dir: string; headers?: Header[]; start: boolean;
   window?: string | null; format?: string | null; size?: number | null; torrentFiles?: number[] | null;
   torrentPrio?: number[]; subtitles?: string | null;
+  checksum?: string | null;
 }
 
 type Ids = { ids: number[] };
@@ -102,6 +133,15 @@ export interface Commands {
   probe_url: [{ url: string; headers: Header[]; filename?: string | null }, ProbeInfo];
   probe_media: [{ url: string; headers: Header[] }, MediaInfo];
   probe_note: [void, string | null];
+  add_links: [{ text: string }, number];
+  is_playlist_url: [{ url: string }, boolean];
+  probe_playlist: [{ url: string }, PlaylistInfo];
+  add_playlist: [{ entries: { url: string; title: string }[]; mode: string }, number];
+  set_url: [{ id: number; url: string }, void];
+  download_next: [{ id: number }, boolean];
+  add_metalink: [{ url: string }, [string, number]];
+  grab_page: [{ url: string }, { url: string; name: string }[]];
+  open_in_browser: [{ url: string }, void];
   is_media_url: [{ url: string }, boolean];
   is_torrent_url: [{ url: string; filename: string | null }, boolean];
   probe_torrent: [{ url: string; headers: Header[] }, TorrentInfo];

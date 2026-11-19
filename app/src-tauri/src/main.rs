@@ -10,6 +10,13 @@ mod media;
 mod native_host;
 mod settings;
 mod torrent;
+mod batch;
+mod debrid;
+mod extract;
+mod ftp;
+mod rpc;
+mod grabber;
+mod metalink;
 mod stream;
 mod updater;
 mod windows;
@@ -33,13 +40,17 @@ pub fn show_main_window(app: &AppHandle) {
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open SwiftDL", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit SwiftDL", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
+    let nolimit = tauri::menu::CheckMenuItem::with_id(app, "nolimit", "Ignore speed limit", true, false, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &nolimit, &PredefinedMenuItem::separator(app)?, &quit])?;
     let mut tray = TrayIconBuilder::with_id("main").tooltip("SwiftDL").menu(&menu).show_menu_on_left_click(false);
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
     }
     tray.on_menu_event(|app, event| match event.id().as_ref() {
         "open" => show_main_window(app),
+        "nolimit" => {
+            app.state::<Arc<DownloadManager>>().toggle_limit();
+        }
         "quit" => {
             app.state::<Arc<DownloadManager>>().save();
             app.exit(0);
@@ -114,6 +125,19 @@ fn main() {
                 }
             };
             mgr.start_ticker();
+            let api = mgr.settings();
+            if api.api_enabled && !api.api_secret.is_empty() {
+                // The network only gets in with a long secret.
+                let lan = api.api_lan && api.api_secret.len() >= 12;
+                if api.api_lan && !lan {
+                    crate::log::line("local API: network access needs a secret of 12 or more characters; staying on this PC");
+                }
+                let addr = format!("{}:{}", if lan { "0.0.0.0" } else { "127.0.0.1" }, api.api_port);
+                match rpc::serve(&addr, Arc::new(mgr.clone()), api.api_secret, lan) {
+                    Ok(_) => crate::log::line(&format!("local API listening on {addr}")),
+                    Err(e) => crate::log::line(&format!("local API couldn't start on {addr}: {e}")),
+                }
+            }
             // Launched by the browser extension: show only the small
             // download window, like IDM. Started at sign-in: stay in the
             // tray. Otherwise open the main window.
@@ -139,6 +163,15 @@ fn main() {
             commands::check_tools_update,
             commands::update_tools,
             commands::probe_note,
+            commands::add_links,
+            commands::is_playlist_url,
+            commands::probe_playlist,
+            commands::add_playlist,
+            commands::set_url,
+            commands::grab_page,
+            commands::add_metalink,
+            commands::download_next,
+            commands::open_in_browser,
             commands::is_media_url,
             commands::is_torrent_url,
             commands::probe_torrent,

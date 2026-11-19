@@ -1,3 +1,15 @@
+// Which captured stream is the video being watched. `items` is newest first.
+// A tab that stays open collects streams from every video played in it, and
+// their links expire, so the oldest is often stale. Prefer the newest playlist
+// that lists several qualities (the main one); failing that, the oldest of the
+// recent ones, since a player loads its main playlist first.
+function pickStream(items) {
+  const streams = items.filter((m) => m.kind === "hls" || m.kind === "dash");
+  const main = streams.find((m) => m.qualities?.length > 1) || streams.find((m) => m.qualities?.length);
+  if (main || !streams.length) return main || null;
+  return streams.filter((m) => streams[0].at - m.at < 60000).at(-1);
+}
+
 const DEFAULTS = { enabled: true, minSizeKB: 0, disabledSites: [], capturePost: true };
 const $ = (id) => document.getElementById(id);
 const DL_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 20h14"/></svg>`;
@@ -36,6 +48,13 @@ async function main() {
     $("status").className = `status ${r?.ok ? "ok" : "off"}`;
     $("status").querySelector("span").textContent = r?.ok ? "Connected" : "Not connected";
     $("missing").hidden = !!r?.ok;
+    if (!r?.ok) {
+      const e = String(r?.error || "");
+      // The browser's own words, in plain terms.
+      $("why").textContent = /not found|forbidden|not allowed/i.test(e)
+        ? "This browser can't find SwiftDL's helper. Install SwiftDL with its installer (not just the .exe file), open it once, then reload this extension."
+        : e ? `The browser said: ${e}` : "Open the app once. If it's already open, restart the browser.";
+    }
     $("main").hidden = !r?.ok;
     $("open").hidden = !r?.ok;
   });
@@ -43,7 +62,7 @@ async function main() {
   const { items = [] } = await chrome.runtime.sendMessage({ type: "media", tabId: tab.id, pageUrl: tab.url });
   const files = items.filter((m) => m.kind === "file");
   // The oldest stream is the player's main playlist, with every quality.
-  const stream = items.filter((m) => m.kind !== "file").at(-1);
+  const stream = pickStream(items);
   const title = (tab.title || "download").replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
   const ext = (m) => (/\.([a-z0-9]{2,4})(?:$|[?#])/i.exec(new URL(m.url).pathname) || [])[1]?.toLowerCase() || (m.mime.split("/")[1] || "mp4").replace(/^x-/, "").slice(0, 4);
 

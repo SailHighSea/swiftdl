@@ -9,3 +9,6 @@ node_modules/
 CLAUDE.md
 node_modules/
 dist/
+
+# Package-manager files made by packaging/make-manifests.py
+packaging/out/

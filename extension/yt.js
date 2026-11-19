@@ -14,6 +14,8 @@
     if (!r || (id && r.videoDetails?.videoId !== id)) r = null;
     const formats = (r?.streamingData?.adaptiveFormats || []).map((f) => ({
       mime: f.mimeType || "", height: f.height || 0, fps: f.fps || 0, bitrate: f.bitrate || 0, size: Number(f.contentLength) || 0,
+      // HDR10 (PQ) or HLG, from the stream's colour information.
+      hdr: /ST2084|B67/i.test(f.colorInfo?.transferCharacteristics || ""),
     }));
     window.postMessage({ swiftdl: "yt-info", id: r?.videoDetails?.videoId || null, title: r?.videoDetails?.title || "", live: !!r?.videoDetails?.isLive, formats }, "*");
   });

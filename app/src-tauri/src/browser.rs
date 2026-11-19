@@ -105,6 +105,13 @@ pub fn mark_extension_seen(browser: Option<&str>) {
     let _ = std::fs::write(dir.join("extension.json"), seen.to_string());
 }
 
+/// Firefox-based browsers use Firefox's extension add-ons and native messaging,
+/// so they count as Firefox here (Zen, LibreWolf, Waterfox, Floorp, Mullvad).
+fn is_firefox_fork(name: &str) -> bool {
+    let stem = name.strip_suffix(".exe").unwrap_or(name);
+    matches!(stem, "zen" | "zen-bin" | "zen-browser" | "librewolf" | "waterfox" | "floorp" | "mullvadbrowser" | "mullvad-browser")
+}
+
 /// Maps a browser executable path to one of our browser ids.
 pub fn browser_from_exe(path: &str) -> Option<&'static str> {
     let p = path.to_lowercase().replace('\\', "/");
@@ -115,7 +122,7 @@ pub fn browser_from_exe(path: &str) -> Option<&'static str> {
         Some("edge")
     } else if name.starts_with("vivaldi") {
         Some("vivaldi")
-    } else if name.starts_with("firefox") {
+    } else if name.starts_with("firefox") || is_firefox_fork(name) {
         Some("firefox")
     } else if p.contains("chromium") {
         Some("chromium")
@@ -480,5 +487,20 @@ mod tests {
         found.sort();
         std::fs::remove_dir_all(&home).ok();
         assert_eq!(found, vec![root.join("BraveSoftware/Brave-Browser"), root.join("net.imput.helium")]);
+    }
+}
+
+#[cfg(test)]
+mod fork_tests {
+    use super::browser_from_exe;
+
+    #[test]
+    fn firefox_based_browsers_count_as_firefox() {
+        for exe in [r"C:\Program Files\Zen Browser\zen.exe", "/Applications/Zen.app/Contents/MacOS/zen", "/usr/bin/librewolf", r"C:\Program Files\Waterfox\waterfox.exe", "/opt/floorp/floorp", "/usr/lib/zen-bin"] {
+            assert_eq!(browser_from_exe(exe), Some("firefox"), "{exe}");
+        }
+        assert_eq!(browser_from_exe("/usr/bin/zenity"), None, "a dialog tool is not a browser");
+        assert_eq!(browser_from_exe(r"C:\Program Files\Mozilla Firefox\firefox.exe"), Some("firefox"));
+        assert_eq!(browser_from_exe(r"C:\Program Files\Google\Chrome\Application\chrome.exe"), Some("chrome"));
     }
 }

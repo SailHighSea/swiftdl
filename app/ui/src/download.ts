@@ -29,10 +29,14 @@ let winW = 552; // the torrent file picker is wider
 const fit = () => {
   if (!win || !LogicalSize) return;
   // The card plus the 16px transparent margin on each side (for its shadow).
-  const h = Math.ceil($("root").getBoundingClientRect().height) + 32;
-  win.setSize(new LogicalSize(winW, Math.min(780, h)));
+  const root = $("root");
+  const h = Math.ceil(Math.max(root.getBoundingClientRect().height, root.scrollHeight)) + 32;
+  // A resize that fails (or lands before the layout settles) must not leave the buttons cut off.
+  Promise.resolve(win.setSize(new LogicalSize(winW, Math.min(780, h)))).catch(() => setTimeout(fit, 400));
 };
 new ResizeObserver(fit).observe($("root"));
+// Again once the page and fonts have settled; some screens report their size late.
+window.addEventListener("load", () => [100, 400, 1200].forEach((t) => setTimeout(fit, t)));
 const setTitle = (t: string) => { $("w-title").textContent = t; document.title = t; win?.setTitle(t); };
 
 $("w-min").onclick = () => win?.minimize();
@@ -81,6 +85,7 @@ async function confirmView(token: number) {
       <span class="k">Size</span><span class="v" id="c-size"><span class="spinner"></span><span class="muted">Checking…</span></span>
       <span class="k">Category</span><span class="v"><select id="c-cat">${Object.keys(CATS).map((c) => `<option>${c}</option>`).join("")}</select></span>
       <span class="k">Save to</span><span class="v"><span class="path" id="c-dir" title=""></span><button class="btn sm" id="c-browse">Change</button></span>
+      <span class="k">SHA-256</span><span class="v"><input id="c-sum" spellcheck="false" placeholder="Optional: paste it to check the file"></span>
     </div>
     <div class="d-foot">
       <button class="btn" id="c-later">Download later</button>
@@ -107,11 +112,14 @@ async function confirmView(token: number) {
   }
   $("c-cat").onchange = () => { $("c-tile").innerHTML = glyph($("c-cat").value, $("c-name").value); if (!dirTouched) setDir(dirFor($("c-cat").value)); };
   $("c-browse").onclick = async () => { const d = await invoke("pick_folder", { start: dir }); if (d) { setDir(d); dirTouched = true; } };
+  $("c-sum").addEventListener("input", () => $("c-sum").classList.remove("bad"));
   $("c-cancel").onclick = () => { invoke("forget_confirm", { token }); $("w-close").click(); };
   const add = async (start: boolean) => {
     const filename = $("c-name").value.trim();
     if (!filename) return;
-    const id = await addDownload({ url: inc.url, filename, dir, headers, start, window: win?.label });
+    const sum = $("c-sum").value.trim().toLowerCase();
+    if (sum && !/^[a-f0-9]{64}$/.test(sum)) { $("c-sum").classList.add("bad"); $("c-sum").title = "A SHA-256 is 64 letters and digits"; $("c-sum").focus(); return; }
+    const id = await addDownload({ url: inc.url, filename, dir, headers, start, window: win?.label, checksum: sum || null });
     if (id == null) return;
     invoke("forget_confirm", { token });
     if (!start) { $("w-close").click(); return; }

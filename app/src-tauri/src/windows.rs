@@ -66,7 +66,9 @@ pub fn open(app: &AppHandle, label: &str, query: &str, title: &str) -> tauri::Re
         // card and shadow), so no native frame, border or unpainted edge shows.
         let built = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(format!("download.html?{query}").into()))
             .title(&title)
-            .inner_size(WINDOW_WIDTH, 360.0)
+            // Tall enough for the New download window with every row (it has
+            // grown since 0.4.0); the page then shrinks it to what it shows.
+            .inner_size(WINDOW_WIDTH, 470.0)
             .resizable(false)
             .maximizable(false)
             .decorations(false)
