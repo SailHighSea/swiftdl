@@ -43,6 +43,10 @@ const params = new URLSearchParams(location.search);
 
 // Adds the download, or shows why it couldn't be added above the buttons
 // (a failed click must never just do nothing). Returns its id, or null.
+/** `dir` plus a subfolder, with the separator the folder already uses. A
+ *  backslash on Linux made a folder literally named "Downloads\Video" (#26). */
+const inFolder = (dir: string, sub: string) => `${dir}${dir.includes("\\") && !dir.includes("/") ? "\\" : "/"}${sub}`;
+
 async function addDownload(req: AddRequest): Promise<number | null> {
   view.querySelector<HTMLElement>(".add-err")?.remove();
   try {
@@ -67,7 +71,7 @@ async function confirmView(token: number) {
   if (await invoke("is_media_url", { url: inc.url })) return mediaView(token, inc, settings, headers);
   if (await invoke("is_torrent_url", { url: inc.url, filename: inc.filename || null })) return torrentView(token, inc, settings, headers);
 
-  const dirFor = (cat: string) => (settings.sortIntoCategories && cat !== "Other" ? `${settings.downloadDir}\\${cat}` : settings.downloadDir);
+  const dirFor = (cat: string) => (settings.sortIntoCategories && cat !== "Other" ? inFolder(settings.downloadDir, cat) : settings.downloadDir);
   view.innerHTML = `
     <div class="d-head"><span id="c-tile">${glyph("Other")}</span><div class="d-name"><input id="c-name" spellcheck="false" placeholder="Getting file details…"><div class="d-sub"><span class="st">${esc(host(inc.url))}</span></div></div></div>
     <div class="kv">
@@ -132,7 +136,7 @@ async function confirmView(token: number) {
 const safeName = (s: string) => s.replace(/[<>:"/\\|?*\u0000-\u001f]+/g, " ").replace(/\s+/g, " ").trim().replace(/[. ]+$/, "").slice(0, 150) || "video";
 async function mediaView(token: number, inc: Incoming, settings: Settings, headers: Header[]) {
   let dir = settings.downloadDir, dirTouched = false, info: MediaInfo | null = null;
-  const dirFor = (cat: string) => (settings.sortIntoCategories && cat !== "Other" ? `${settings.downloadDir}\\${cat}` : settings.downloadDir);
+  const dirFor = (cat: string) => (settings.sortIntoCategories && cat !== "Other" ? inFolder(settings.downloadDir, cat) : settings.downloadDir);
   view.innerHTML = `
     <div class="d-head"><span id="c-tile">${glyph("Video")}</span><div class="d-name"><input id="c-name" spellcheck="false" placeholder="Getting video details…"><div class="d-sub"><span class="st">${esc(host(inc.url))}</span></div></div></div>
     <div class="kv">
