@@ -351,6 +351,22 @@ impl DownloadManager {
         self.changed();
     }
 
+    /// Makes the computer's start-up list match the setting.
+    pub fn apply_autostart(&self) {
+        use tauri_plugin_autostart::ManagerExt;
+        let want = self.settings().run_at_startup;
+        let launcher = self.app.autolaunch();
+        match launcher.is_enabled() {
+            Ok(now) if now != want => {
+                if let Err(e) = if want { launcher.enable() } else { launcher.disable() } {
+                    crate::log::line(&format!("could not change start with the computer: {e}"));
+                }
+            }
+            Ok(_) => {}
+            Err(e) => crate::log::line(&format!("could not read start with the computer: {e}")),
+        }
+    }
+
     pub fn set_settings(self: &Arc<Self>, settings: Settings) {
         crate::media::set_proxy(&settings.proxy);
         crate::media::set_bind(&settings.bind_address);
@@ -361,6 +377,7 @@ impl DownloadManager {
         // Open windows (download windows) follow the theme at once.
         let _ = self.app.emit("settings", &settings);
         self.inner.lock().unwrap().settings = settings;
+        self.apply_autostart();
         self.save();
         self.schedule();
     }

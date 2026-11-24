@@ -21,9 +21,23 @@ pub trait Backend: Send + Sync {
     fn pause(&self, id: u64);
     fn resume(&self, id: u64);
     fn remove(&self, id: u64);
+    /// A download handed over by the browser extension, which then gets the
+    /// same "New download" window as one that came through native messaging.
+    fn hand_over(&self, _download: Value) -> Result<(), String> {
+        Err("not supported".into())
+    }
 }
 
 impl Backend for Arc<DownloadManager> {
+    fn hand_over(&self, download: Value) -> Result<(), String> {
+        let inc: crate::manager::Incoming = serde_json::from_value(download).map_err(|e| format!("bad download: {e}"))?;
+        if !(inc.url.starts_with("http://") || inc.url.starts_with("https://")) {
+            return Err("only http and https links".into());
+        }
+        self.incoming(inc);
+        Ok(())
+    }
+
     fn items(&self) -> Vec<Item> {
         self.snapshot()
     }
@@ -65,11 +79,11 @@ impl Backend for Arc<DownloadManager> {
     }
 }
 
-const METHODS: [&str; 20] = [
+const METHODS: [&str; 21] = [
     "aria2.addUri", "aria2.remove", "aria2.forceRemove", "aria2.pause", "aria2.pauseAll", "aria2.forcePause", "aria2.forcePauseAll",
     "aria2.unpause", "aria2.unpauseAll", "aria2.tellStatus", "aria2.tellActive", "aria2.tellWaiting", "aria2.tellStopped",
     "aria2.getGlobalStat", "aria2.getVersion", "aria2.getGlobalOption", "aria2.getOption", "aria2.changeGlobalOption",
-    "aria2.removeDownloadResult", "system.multicall",
+    "aria2.removeDownloadResult", "swiftdl.download", "system.multicall",
 ];
 
 fn gid(id: u64) -> String {
@@ -196,6 +210,11 @@ fn call(method: &str, params: &[Value], be: &dyn Backend, secret: &str) -> Resul
         }
         "aria2.unpauseAll" => {
             of(&[Status::Paused]).into_iter().for_each(|i| be.resume(i.id));
+            json!("OK")
+        }
+        // The browser extension's way in when native messaging isn't available.
+        "swiftdl.download" => {
+            be.hand_over(params.first().cloned().unwrap_or(Value::Null)).map_err(|e| (1, e))?;
             json!("OK")
         }
         "aria2.getGlobalOption" | "aria2.getOption" => json!({}),
@@ -352,6 +371,29 @@ mod tests {
 
     fn rpc(f: &Fake, method: &str, params: Value) -> Value {
         dispatch(&json!({ "jsonrpc": "2.0", "id": "q", "method": method, "params": params }), f, "s3cret")
+    }
+
+    #[test]
+    fn takes_a_download_from_the_extension() {
+        struct Taker(Mutex<Vec<Value>>);
+        impl Backend for Taker {
+            fn items(&self) -> Vec<Item> { vec![] }
+            fn add(&self, _: &str, _: Option<&str>, _: Option<&str>) -> Result<u64, String> { Ok(1) }
+            fn pause(&self, _: u64) {}
+            fn resume(&self, _: u64) {}
+            fn remove(&self, _: u64) {}
+            fn hand_over(&self, d: Value) -> Result<(), String> {
+                self.0.lock().unwrap().push(d);
+                Ok(())
+            }
+        }
+        let t = Taker(Mutex::new(vec![]));
+        let call = |params: Value| dispatch(&json!({ "jsonrpc": "2.0", "id": 1, "method": "swiftdl.download", "params": params }), &t, "s3cret");
+        assert!(call(json!([{ "url": "https://a.example/x.zip" }]))["error"].is_object(), "needs the token");
+        assert_eq!(call(json!(["token:s3cret", { "url": "https://a.example/x.zip", "referrer": "https://a.example/" }]))["result"], "OK");
+        assert_eq!(t.0.lock().unwrap().len(), 1);
+        // The plain fake doesn't take downloads.
+        assert!(rpc(&fake(), "swiftdl.download", json!(["token:s3cret", { "url": "https://a.example/x.zip" }]))["error"].is_object());
     }
 
     #[test]

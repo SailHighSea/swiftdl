@@ -42,6 +42,9 @@ pub struct Settings {
     pub bind_address: String,
     /// When switching to SwiftDL, offer to download a link on the clipboard.
     pub watch_clipboard: bool,
+    /// Start with the computer, quietly in the tray, so the browser extension
+    /// always has an app to hand downloads to.
+    pub run_at_startup: bool,
     /// Unpack finished .zip, .tar.gz and .7z files into a folder beside them.
     pub extract_archives: bool,
     /// Interface size in percent (90-150).
@@ -84,6 +87,7 @@ impl Default for Settings {
             proxy: String::new(),
             bind_address: String::new(),
             watch_clipboard: false,
+            run_at_startup: true,
             extract_archives: false,
             ui_scale: 100,
             video_default: "ask".into(),

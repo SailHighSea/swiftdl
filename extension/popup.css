@@ -80,3 +80,10 @@ kbd { display: inline-flex; align-items: center; height: 16px; padding: 0 4px; b
 .missing span { color: var(--muted); font-size: 12.5px; margin-bottom: 10px; }
 .btn { display: inline-flex; align-items: center; height: 28px; padding: 0 11px; border-radius: 7px; background: var(--btn-bg); color: var(--text); font-weight: 550; font-size: 12.5px; text-decoration: none; }
 .btn:hover { background: var(--btn-hover); }
+
+#port { width: 100%; margin-top: 10px; font-size: 12.5px; }
+#port summary { cursor: pointer; color: var(--muted); }
+#port p { margin: 8px 0; color: var(--muted); }
+#port input { display: block; width: 100%; box-sizing: border-box; height: 28px; margin-bottom: 6px; padding: 0 9px; border: 0; border-radius: 6px; background: var(--btn-bg); color: var(--text); font: inherit; outline: none; }
+#port .btn { border: 0; cursor: pointer; }
+#port #api-msg { display: inline; margin-left: 8px; font-size: 12px; margin-bottom: 0; }

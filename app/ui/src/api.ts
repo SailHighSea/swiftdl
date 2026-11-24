@@ -61,6 +61,7 @@ export interface Settings {
   bindAddress: string;
   /** Offer to download a link on the clipboard when switching to SwiftDL. */
   watchClipboard: boolean;
+  runAtStartup: boolean;
   /** Unpack finished archives beside themselves. */
   extractArchives: boolean;
   /** "realdebrid", "alldebrid" or "premiumize". */

@@ -6,6 +6,20 @@ uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-24
+
+### Added
+- **Start with the computer.** SwiftDL opens quietly in the tray at sign-in, so
+  the browser extension always has an app to hand downloads to. It is on by
+  default; Settings > General > Start with the computer turns it off.
+- **The extension can connect through a port.** Where the browser can't use
+  SwiftDL's helper (a portable copy, for example), switch on Remote control in
+  SwiftDL, then enter its port and secret in the extension's popup (#16).
+
+### Fixed
+- **Linux: the save folder was named `Downloads\Video`** (a backslash) when
+  sorting by file type (#26).
+
 ## [0.4.3] - 2026-11-23
 
 ### Added

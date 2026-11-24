@@ -81,10 +81,12 @@ fn main() {
                 app.state::<Arc<DownloadManager>>().prepare(&inc);
             } else if let Some(inc) = native_host::parse_add_arg(&args).or_else(|| torrent::parse_open_arg(&args)) {
                 app.state::<Arc<DownloadManager>>().incoming(inc);
-            } else {
+            } else if !args.iter().any(|a| a == "--background") {
                 show_main_window(app);
             }
         }))
+        // Started by the computer with --background: stay in the tray.
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--background"])))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
@@ -109,6 +111,7 @@ fn main() {
             if let Err(e) = build_tray(app.handle()) {
                 crate::log::line(&format!("tray icon not available: {e:#}"));
             }
+            mgr.apply_autostart();
             mgr.start_ticker();
             let api = mgr.settings();
             if api.api_enabled && !api.api_secret.is_empty() {
@@ -132,6 +135,7 @@ fn main() {
             }
             match native_host::parse_add_arg(&args).or_else(|| torrent::parse_open_arg(&args)) {
                 Some(inc) => mgr.incoming(inc),
+                None if args.iter().any(|a| a == "--background") => {}
                 None => show_main_window(app.handle()),
             }
             Ok(())
