@@ -814,7 +814,7 @@ function renderChips() {
   $("add-chips").innerHTML = i ? [
     `<span class="chip">${icon("hash")}<span>${i.size != null ? bytes(i.size) : "Unknown size"}</span></span>`,
     `<span class="chip"><i class="dot" style="background:${(CATS[i.category] || CATS.Other).color}"></i><span>${esc(i.category)}</span></span>`,
-    i.resumable ? `<span class="chip ok">${icon("bolt")}<span>${state.settings?.connections || 8} connections</span></span>` : `<span class="chip warn">${icon("info")}<span>Single connection, no resume</span></span>`,
+    i.resumable ? `<span class="chip ok">${icon("bolt")}<span>Up to ${state.settings?.connections || 8} connections</span></span>` : `<span class="chip warn">${icon("info")}<span>Single connection, no resume</span></span>`,
     `<button type="button" class="chip" id="add-folder" title="${esc(add.dir)}">${icon("folder")}<span>${esc(folder)}</span>${icon("chevDown")}</button>`,
   ].join("") : "";
 }

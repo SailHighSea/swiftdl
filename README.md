@@ -197,6 +197,8 @@ What it does:
 3. Click **Load unpacked**.
 4. Choose SwiftDL's extension folder. The **Open extension folder** button takes you there. In a portable copy it's the `extension` folder beside the app; with an installer on Windows it's `%LOCALAPPDATA%\SwiftDL\extension`.
 
+**Connect through a port:** where the browser can't use SwiftDL's helper, switch on **Remote control** in SwiftDL's Settings, then open the extension's popup, choose **Connect through a port instead** and enter the port and secret. SwiftDL must be running.
+
 Use that folder rather than a copy: it stays in place and is refreshed when SwiftDL updates. If you don't have the app installed, `swiftdl-extension.zip` on the [Releases page](https://github.com/harshsinghsv/swiftdl/releases) has the same files.
 
 Once the extension is on the Chrome Web Store, SwiftDL will offer it automatically: Chrome, Edge and Brave show a one-time **New extension added** prompt and you click **Enable**. No browser lets an app install an extension silently.

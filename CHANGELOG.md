@@ -15,6 +15,10 @@ uses [Semantic Versioning](https://semver.org/).
   page's video, not an "up next" video linked near the player.
 
 ### Added
+- Merged upstream SwiftDL 0.4.3 and 0.5.0: Mirrors field in New download, the browser's own download box no longer
+  shows beside SwiftDL's window, the extension can connect through a port, connection count fix, Linux
+  window focus and save-folder fixes, and a macOS yt-dlp fix (see the entries below). Upstream's separate
+  "Start with the computer" setting is left out: this build keeps its own start-at-sign-in setting, off by default.
 - Merged upstream SwiftDL 0.4.2: ftp:// and Metalink/mirror downloads, SHA-256 check, archive unpacking, proxies, debrid services, site grabber, YouTube playlists, HDR quality, skip-the-video-window setting, queue order, aria2-compatible API and web remote, the Windows ARM64 installer fix (see the 0.4.x entries below).
 - The video button's quality menu on YouTube and streams has a **More options…**
   row that opens SwiftDL's New download window with every choice (video and
@@ -49,6 +53,35 @@ uses [Semantic Versioning](https://semver.org/).
   "Form (POST) downloads" switch in the extension popup turns this off so the
   browser handles them; the per-site switch already skips a whole site.
 - Show in folder on the download-complete window now closes the window.
+
+## [0.5.0] - 2026-11-24
+
+### Added
+- **The extension can connect through a port.** Where the browser can't use
+  SwiftDL's helper (a portable copy, for example), switch on Remote control in
+  SwiftDL, then enter its port and secret in the extension's popup (#16).
+
+### Fixed
+- **Linux: the save folder was named `Downloads\Video`** (a backslash) when
+  sorting by file type (#26).
+
+## [0.4.3] - 2026-11-23
+
+### Added
+- **Mirrors field** in the New download window: paste other links to the same
+  file and the parts are shared between all of them (#23).
+
+### Fixed
+- **The browser's own download box showed next to SwiftDL's window.** The
+  extension now drops the browser's download at once; if SwiftDL can't be
+  reached, the browser downloads the file itself.
+- **"8 connections" while the server let only one through.** Connections are
+  counted only while data is arriving, and the New download window says "up
+  to 8".
+- **Linux: the New download window opened behind other windows** (#24). It now
+  stays on top and asks the desktop to point at it.
+- **macOS: "Python.framework is damaged"** (#21). yt-dlp now runs from an
+  unpacked copy whose quarantine mark is cleared. Untested on a Mac.
 
 ## [0.4.2] - 2026-11-18
 
