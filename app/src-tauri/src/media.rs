@@ -133,6 +133,10 @@ fn tools_dir() -> PathBuf {
 }
 
 fn ytdlp_path() -> PathBuf {
+    if cfg!(target_os = "macos") {
+        // The unpacked build: see `install_macos_ytdlp`.
+        return tools_dir().join("yt-dlp-macos").join("yt-dlp_macos");
+    }
     tools_dir().join(if cfg!(windows) { "yt-dlp.exe" } else { "yt-dlp" })
 }
 
@@ -317,12 +321,85 @@ fn strip_quarantine() {
 #[cfg(not(target_os = "macos"))]
 fn strip_quarantine() {}
 
+/// On a Mac, yt-dlp comes as the build that is already unpacked (a program plus
+/// an `_internal` folder). The single-file build unpacks its Python.framework
+/// into a fresh temporary folder on every run, outside anything we can clean,
+/// and macOS refuses it as "damaged" (#21). Unpacked once here, the mark can
+/// be cleared from every file before yt-dlp ever runs.
+async fn install_macos_ytdlp(client: &Client, note: &Note) -> Result<()> {
+    let dir = tools_dir().join("yt-dlp-macos");
+    let fresh = tools_dir().join("yt-dlp-macos.new");
+    let zip = tools_dir().join("yt-dlp_macos.zip");
+    let url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos.zip";
+    fetch(client, url, &zip, note, "Getting yt-dlp").await.context("couldn't download yt-dlp")?;
+    set_note(note, "Unpacking yt-dlp");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let unpacked = unpack_zip(&zip, &fresh);
+    let _ = std::fs::remove_file(&zip);
+    unpacked.context("couldn't unpack yt-dlp")?;
+    let _ = std::fs::remove_file(tools_dir().join("yt-dlp")); // the old single-file build
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::rename(&fresh, &dir)?;
+    strip_quarantine();
+    stamp_update();
+    Ok(())
+}
+
+/// Unpacks a whole zip, keeping each file's permissions.
+fn unpack_zip(zip: &Path, dest: &Path) -> Result<()> {
+    std::fs::create_dir_all(dest)?;
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(zip)?)?;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        let Some(rel) = entry.enclosed_name() else { continue };
+        let out = dest.join(rel);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out)?;
+            continue;
+        }
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut file = std::fs::File::create(&out)?;
+        std::io::copy(&mut entry, &mut file)?;
+        #[cfg(unix)]
+        if let Some(mode) = entry.unix_mode() {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&out, std::fs::Permissions::from_mode(mode & 0o777))?;
+        }
+    }
+    Ok(())
+}
+
 /// Downloads yt-dlp (and ffmpeg on Windows) if they're missing.
 async fn ensure_tools(client: &Client, note: &Note, need_ffmpeg: bool) -> Result<Tools> {
     let _guard = TOOLS.lock().await;
     std::fs::create_dir_all(tools_dir())?;
     let ytdlp = ytdlp_path();
-    if !ytdlp.exists() {
+    if cfg!(target_os = "macos") {
+        if !ytdlp.exists() {
+            install_macos_ytdlp(client, note).await?;
+        } else {
+            strip_quarantine();
+            // The unpacked build can't update itself: fetch a fresh copy once a day.
+            let stale = std::fs::metadata(stamp_path())
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| SystemTime::now().duration_since(t).ok())
+                .is_none_or(|age| age >= Duration::from_secs(24 * 3600));
+            if stale {
+                stamp_update();
+                let (client, note) = (client.clone(), Note::default());
+                tokio::spawn(async move {
+                    // Runs only while nothing else is using the tools.
+                    let _guard = TOOLS.lock().await;
+                    if let Err(e) = install_macos_ytdlp(&client, &note).await {
+                        crate::applog::line(&format!("couldn't refresh yt-dlp: {e:#}"));
+                    }
+                });
+            }
+        }
+    } else if !ytdlp.exists() {
         let url = format!("https://github.com/yt-dlp/yt-dlp/releases/latest/download/{}", ytdlp_asset());
         fetch(client, &url, &ytdlp, note, "Getting yt-dlp").await.context("couldn't download yt-dlp")?;
         #[cfg(unix)]

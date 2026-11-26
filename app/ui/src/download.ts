@@ -48,6 +48,10 @@ const params = new URLSearchParams(location.search);
 
 // Adds the download, or shows why it couldn't be added above the buttons
 // (a failed click must never just do nothing). Returns its id, or null.
+/** `dir` plus a subfolder, with the separator the folder already uses. A
+ *  backslash on Linux made a folder literally named "Downloads\Video" (#26). */
+const inFolder = (dir: string, sub: string) => `${dir}${dir.includes("\\") && !dir.includes("/") ? "\\" : "/"}${sub}`;
+
 async function addDownload(req: AddRequest): Promise<number | null> {
   view.querySelector<HTMLElement>(".add-err")?.remove();
   try {
@@ -77,7 +81,7 @@ async function confirmView(token: number) {
   if (await invoke("is_media_url", { url: inc.url })) return mediaView(token, inc, settings, headers);
   if (await invoke("is_torrent_url", { url: inc.url, filename: inc.filename || null })) return torrentView(token, inc, settings, headers);
 
-  const dirFor = (cat: string) => (settings.sortIntoCategories && cat !== "Other" ? `${settings.downloadDir}\\${cat}` : settings.downloadDir);
+  const dirFor = (cat: string) => (settings.sortIntoCategories && cat !== "Other" ? inFolder(settings.downloadDir, cat) : settings.downloadDir);
   view.innerHTML = `
     <div class="d-head"><span id="c-tile">${glyph("Other")}</span><div class="d-name"><input id="c-name" spellcheck="false" placeholder="Getting file details…"><div class="d-sub"><span class="st">${esc(host(inc.url))}</span></div></div></div>
     <div class="kv">
@@ -85,6 +89,7 @@ async function confirmView(token: number) {
       <span class="k">Size</span><span class="v" id="c-size"><span class="spinner"></span><span class="muted">Checking…</span></span>
       <span class="k">Category</span><span class="v"><select id="c-cat">${Object.keys(CATS).map((c) => `<option>${c}</option>`).join("")}</select></span>
       <span class="k">Save to</span><span class="v"><span class="path" id="c-dir" title=""></span><button class="btn sm" id="c-browse">Change</button></span>
+      <span class="k">Mirrors</span><span class="v"><input id="c-mirrors" spellcheck="false" title="Other addresses of the same file. The parts are shared between all of them, and a failing one is skipped." placeholder="Optional: other links to the same file"></span>
       <span class="k">SHA-256</span><span class="v"><input id="c-sum" spellcheck="false" placeholder="Optional: paste it to check the file"></span>
     </div>
     <div class="d-foot">
@@ -104,7 +109,7 @@ async function confirmView(token: number) {
     $("c-cat").value = info.category;
     $("c-tile").innerHTML = glyph(info.category, $("c-name").value);
     setDir(info.dir);
-    $("c-size").innerHTML = `<span>${info.size != null ? bytes(info.size) : "Unknown size"}</span><span class="muted">${info.resumable ? `Resumable · ${settings.connections} connections` : "Can't resume · 1 connection"}</span>`;
+    $("c-size").innerHTML = `<span>${info.size != null ? bytes(info.size) : "Unknown size"}</span><span class="muted">${info.resumable ? `Resumable · up to ${settings.connections} connections` : "Can't resume · 1 connection"}</span>`;
     $("c-start").disabled = false;
   } catch (e) {
     $("c-name").value = inc.filename || "download";
@@ -113,13 +118,16 @@ async function confirmView(token: number) {
   $("c-cat").onchange = () => { $("c-tile").innerHTML = glyph($("c-cat").value, $("c-name").value); if (!dirTouched) setDir(dirFor($("c-cat").value)); };
   $("c-browse").onclick = async () => { const d = await invoke("pick_folder", { start: dir }); if (d) { setDir(d); dirTouched = true; } };
   $("c-sum").addEventListener("input", () => $("c-sum").classList.remove("bad"));
+  $("c-mirrors").addEventListener("input", () => $("c-mirrors").classList.remove("bad"));
   $("c-cancel").onclick = () => { invoke("forget_confirm", { token }); $("w-close").click(); };
   const add = async (start: boolean) => {
     const filename = $("c-name").value.trim();
     if (!filename) return;
     const sum = $("c-sum").value.trim().toLowerCase();
     if (sum && !/^[a-f0-9]{64}$/.test(sum)) { $("c-sum").classList.add("bad"); $("c-sum").title = "A SHA-256 is 64 letters and digits"; $("c-sum").focus(); return; }
-    const id = await addDownload({ url: inc.url, filename, dir, headers, start, window: win?.label, checksum: sum || null });
+    const mirrors = $("c-mirrors").value.split(/[\s,]+/).filter(Boolean);
+    if (mirrors.some((m) => !/^https?:\/\/\S+$/i.test(m))) { $("c-mirrors").classList.add("bad"); $("c-mirrors").title = "Mirrors are http(s) links, separated by spaces or commas"; $("c-mirrors").focus(); return; }
+    const id = await addDownload({ url: inc.url, filename, dir, headers, start, window: win?.label, checksum: sum || null, mirrors });
     if (id == null) return;
     invoke("forget_confirm", { token });
     if (!start) { $("w-close").click(); return; }
@@ -200,7 +208,7 @@ const CODECS_FOR = { mp4: ["H.264", "H.265", "AV1", "VP9"], webm: ["VP8", "VP9",
 async function mediaView(token: number, inc: Incoming, settings: Settings, headers: Header[]) {
   let dir = settings.downloadDir, dirTouched = false, info = null, adv = false, legacy = false;
   let choices = [];
-  const dirFor = (cat) => (settings.sortIntoCategories && cat !== "Other" ? `${settings.downloadDir}\\${cat}` : settings.downloadDir);
+  const dirFor = (cat: string) => (settings.sortIntoCategories && cat !== "Other" ? inFolder(settings.downloadDir, cat) : settings.downloadDir);
   view.innerHTML = `
     <div class="d-head"><span id="c-tile">${glyph("Video")}</span><div class="d-name"><input id="c-name" spellcheck="false" placeholder="Getting video details…"><div class="d-sub"><span class="st">${esc(host(inc.url))}</span></div></div></div>
     <div class="kv">

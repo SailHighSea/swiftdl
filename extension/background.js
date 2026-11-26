@@ -30,6 +30,32 @@ chrome.permissions?.contains({ origins: ["<all_urls>"] })
 
 // ---------- talking to the app ----------
 
+// The app's local API (Settings > Remote control) is a second way to reach it,
+// for when the browser can't use the native helper. Port and secret are kept
+// on this computer only.
+const apiConfig = async () => {
+  const { api } = await chrome.storage.local.get("api");
+  return api?.secret ? { port: Number(api.port) || 6800, secret: api.secret } : null;
+};
+
+async function apiCall(method, params = []) {
+  const cfg = await apiConfig();
+  if (!cfg) throw new Error("no port and secret set");
+  let res;
+  try {
+    res = await fetch(`http://127.0.0.1:${cfg.port}/jsonrpc`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: [`token:${cfg.secret}`, ...params] }),
+    });
+  } catch {
+    return { ok: false, error: "SwiftDL isn't running, or its remote control is off (Settings > Remote control)" };
+  }
+  const body = await res.json().catch(() => null);
+  if (body?.error) return { ok: false, error: body.error.message === "Unauthorized" ? "The secret doesn't match the one in SwiftDL" : body.error.message };
+  return { ok: true, version: body?.result?.version };
+}
+
 async function cookieHeader(url) {
   try {
     const cookies = await chrome.cookies.getAll({ url });
@@ -60,7 +86,15 @@ async function sendToApp({ url, referrer, filename, post, qualities, pick }) {
   } catch (e) {
     await log(`native host failed, retrying: ${e?.message || e}`);
     await new Promise((r) => setTimeout(r, 800));
-    reply = await chrome.runtime.sendNativeMessage(HOST, message);
+    try {
+      reply = await chrome.runtime.sendNativeMessage(HOST, message);
+    } catch (e2) {
+      // No helper registered (a portable copy, say): the app's local API is
+      // another way in, when it is switched on and the secret was entered.
+      if (!(await apiConfig())) throw e2;
+      await log(`using the local API instead: ${e2?.message || e2}`);
+      reply = await apiCall("swiftdl.download", [message]);
+    }
   }
   if (!reply?.ok) throw new Error(reply?.error || "SwiftDL did not accept the download");
 }
@@ -68,7 +102,12 @@ async function sendToApp({ url, referrer, filename, post, qualities, pick }) {
 const ping = () =>
   chrome.runtime.sendNativeMessage(HOST, { type: "ping" })
     .then((r) => ({ ok: !!r?.ok, version: r?.version }))
-    .catch((e) => ({ ok: false, error: String(e?.message || e) }));
+    .catch(async (e) => {
+      const native = String(e?.message || e);
+      if (!(await apiConfig())) return { ok: false, error: native };
+      const r = await apiCall("aria2.getVersion");
+      return r.ok ? { ok: true, version: r.version, via: "port" } : { ok: false, error: r.error, native };
+    });
 
 function flashBadge(text, color, tabId) {
   chrome.action.setBadgeBackgroundColor({ color });
@@ -209,22 +248,34 @@ chrome.downloads.onCreated.addListener(async (item) => {
     return;
   }
 
-  // Pause first so the browser doesn't keep downloading while we ask the app.
-  await chrome.downloads.pause(item.id).catch(() => {});
+  // Drop the browser's own download at once: while it lingers, the browser
+  // shows its save box or download bubble next to SwiftDL's window. If the app
+  // can't be reached, the browser is asked to download the file again. A POST
+  // can't be asked for again, so it is only paused until the app accepts it.
+  const { referrer, filename } = item;
+  const drop = async () => {
+    await chrome.downloads.cancel(item.id).catch(() => {});
+    await chrome.downloads.erase({ id: item.id }).catch(() => {});
+  };
+  if (post) await chrome.downloads.pause(item.id).catch(() => {});
+  else await drop();
   try {
     await sendToApp({
       url: post ? post.url : url,
-      referrer: item.referrer,
-      filename: post?.filename || item.filename,
+      referrer,
+      filename: post?.filename || filename,
       post: post || undefined,
     });
-    await chrome.downloads.cancel(item.id).catch(() => {});
-    await chrome.downloads.erase({ id: item.id }).catch(() => {});
+    if (post) await drop();
     await log(`#${item.id} handed to SwiftDL`);
     flashBadge("✓", "#2f9e6a");
   } catch (err) {
     await log(`#${item.id} left to the browser: ${err?.message || err}`);
-    await chrome.downloads.resume(item.id).catch(() => {});
+    if (post) await chrome.downloads.resume(item.id).catch(() => {});
+    else {
+      browserOnce.set(url.split("#")[0], Date.now() + 60000);
+      await chrome.downloads.download({ url }).catch(() => {});
+    }
     flashBadge("!", "#dc4b4b");
   }
 });

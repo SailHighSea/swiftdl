@@ -87,7 +87,7 @@ fn main() {
                 app.state::<Arc<DownloadManager>>().prepare(&inc);
             } else if let Some(inc) = native_host::parse_add_arg(&args).or_else(|| torrent::parse_open_arg(&args)) {
                 app.state::<Arc<DownloadManager>>().incoming(inc);
-            } else {
+            } else if !args.iter().any(|a| a == autostart::HIDDEN_ARG) {
                 show_main_window(app);
             }
         }))

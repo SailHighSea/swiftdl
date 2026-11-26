@@ -327,10 +327,7 @@ async fn usable_mirrors(client: &Client, req: &Request, size: u64) -> Vec<String
 /// steal half of someone else's), until there is nothing worth taking.
 async fn worker(shared: Arc<Shared>, id: usize) -> Result<()> {
     while let Some(seg) = shared.claim() {
-        shared.progress.connections.fetch_add(1, Ordering::Relaxed);
-        let result = download_segment(&shared, &seg, id).await;
-        shared.progress.connections.fetch_sub(1, Ordering::Relaxed);
-        result?;
+        download_segment(&shared, &seg, id).await?;
     }
     Ok(())
 }
@@ -373,6 +370,21 @@ async fn download_segment(shared: &Shared, seg: &Segment, id: usize) -> Result<(
     }
 }
 
+struct LiveConnection<'a>(&'a Progress);
+
+impl<'a> LiveConnection<'a> {
+    fn open(progress: &'a Progress) -> Self {
+        progress.connections.fetch_add(1, Ordering::Relaxed);
+        Self(progress)
+    }
+}
+
+impl Drop for LiveConnection<'_> {
+    fn drop(&mut self) {
+        self.0.connections.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 async fn fetch_range(shared: &Shared, url: &str, seg: &Segment, pos: u64, end: u64) -> Result<()> {
     let resp = shared
         .client
@@ -384,6 +396,10 @@ async fn fetch_range(shared: &Shared, url: &str, seg: &Segment, pos: u64, end: u
     if resp.status() != StatusCode::PARTIAL_CONTENT {
         bail!("expected 206 for a range request, got {}", resp.status());
     }
+    // Counted only while data is really flowing: a worker waiting to retry
+    // after a refusal is not a connection (it used to be, so the app could say
+    // "8 connections" while the server let just one through).
+    let _live = LiveConnection::open(&shared.progress);
     let mut body = resp.bytes_stream();
     while let Some(chunk) = body.next().await {
         let chunk = chunk?;

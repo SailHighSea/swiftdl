@@ -124,6 +124,7 @@ export interface AddRequest {
   window?: string | null; format?: string | null; size?: number | null; torrentFiles?: number[] | null;
   torrentPrio?: number[]; subtitles?: string | null;
   checksum?: string | null;
+  mirrors?: string[];
 }
 
 type Ids = { ids: number[] };

@@ -50,6 +50,14 @@
     <b>Can't reach SwiftDL</b>
     <span id="why">Open the app once. If it's already open, restart the browser.</span>
     <a href="https://github.com/harshsinghsv/swiftdl/releases/latest" target="_blank" class="btn">Download SwiftDL</a>
+    <details id="port">
+      <summary>Connect through a port instead</summary>
+      <p>In SwiftDL, open Settings, switch on Remote control and copy the secret. SwiftDL must be running.</p>
+      <input id="api-port" inputmode="numeric" placeholder="Port (6800)" aria-label="Port">
+      <input id="api-secret" type="password" placeholder="Secret" aria-label="Secret" autocomplete="off">
+      <button id="api-save" class="btn">Save and test</button>
+      <span id="api-msg"></span>
+    </details>
   </div>
 
   <script src="popup.js"></script>

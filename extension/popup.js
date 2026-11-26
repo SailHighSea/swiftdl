@@ -57,7 +57,22 @@ async function main() {
     }
     $("main").hidden = !r?.ok;
     $("open").hidden = !r?.ok;
+    if (r?.via === "port") $("status").querySelector("span").textContent = "Connected (port)";
   });
+
+  chrome.storage.local.get("api").then(({ api }) => {
+    $("api-port").value = api?.port || "";
+    $("api-secret").value = api?.secret || "";
+    $("port").open = !!api?.secret;
+  });
+  $("api-save").onclick = async () => {
+    const port = Number($("api-port").value.trim()) || 6800;
+    const secret = $("api-secret").value.trim();
+    await chrome.storage.local.set({ api: secret ? { port, secret } : null });
+    const r = await chrome.runtime.sendMessage({ type: "ping" });
+    $("api-msg").textContent = r?.ok ? "Connected" : (r?.error || "Not connected");
+    if (r?.ok) setTimeout(() => location.reload(), 600);
+  };
 
   const { items = [] } = await chrome.runtime.sendMessage({ type: "media", tabId: tab.id, pageUrl: tab.url });
   const files = items.filter((m) => m.kind === "file");
